@@ -1,5 +1,5 @@
-MIT License
 
+/**
 Copyright (c) 2019 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -19,3 +19,14 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+*/
+
+#ifndef SMBB_UTILITIES_ATOMIC_H
+#define SMBB_UTILITIES_ATOMIC_H
+
+#if (defined(_MSC_VER) && _MSC_VER >= 1700) || __cplusplus >= 201103L
+#include <atomic>
+#else
+#endif
+
+#endif

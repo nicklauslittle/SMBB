@@ -1,0 +1,12 @@
+# Visual Studio files
+Release
+Debug
+*.user
+*.VC.*db
+.vs
+
+# Makefile files
+obj
+UnitTests
+
+*.log
