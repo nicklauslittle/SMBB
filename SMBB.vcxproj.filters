@@ -15,9 +15,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\smbb\SMBB.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="src\smbb\IPSocket.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -45,5 +42,19 @@
     <ClInclude Include="src\smbb\DataBlocks.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\smbb\IPAddress.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\smbb\Version.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\smbb\utilities\StaticCast.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\smbb\IPAddress.cxx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

@@ -34,27 +34,27 @@ SOFTWARE.
 
 using namespace smbb;
 
-SCENARIO("Unordered", "[PacketMemory], [SharedMemory]") {
+SCENARIO ("Unordered", "[PacketMemory], [SharedMemory]") {
 	IPSocket::Initialize();
 
-	IPSocket recvSock(IPSocket::Address("localhost", NULL, true, IPSocket::IPV4), IPSocket::UDP, IPSocket::OPEN_AND_BIND);
-	IPSocket sendSock(recvSock.GetAddress(), IPSocket::UDP, IPSocket::OPEN_AND_CONNECT);
+	IPSocket recvSock(IPAddress("localhost", NULL, true, IPV4), UDP, IPSocket::OPEN_AND_BIND);
+	IPSocket sendSock(recvSock.GetAddress(), UDP, IPSocket::OPEN_AND_CONNECT);
 
 	const char *testData[] = { "This is a ", "test.", "misordered data " };
 	IPSocket::Buffer buffers[] = { IPSocket::Buffer::Make(testData[0], strlen(testData[0])), IPSocket::Buffer::Make(testData[2], strlen(testData[2])), IPSocket::Buffer::Make(testData[1], strlen(testData[1]) + 1) };
 	IPSocket::Message message = IPSocket::Message::Make(buffers, sizeof(buffers) / sizeof(buffers[0]));
 	REQUIRE(sendSock.Send(message).GetBytes() > 0);
 
-	IPSocket::PollItem pollItem = recvSock.GetPollItem(IPSocket::POLL_CAN_READ);
+	IPSocket::PollItem pollItem = IPSocket::PollItem::Make(recvSock, IPSocket::POLL_CAN_READ);
 	IPSocket::Poll(&pollItem, 1, 1000);
-	REQUIRE((recvSock.GetPollResult(pollItem) & IPSocket::POLL_CAN_READ) != 0);
+	REQUIRE(pollItem.HasResult(IPSocket::POLL_CAN_READ));
 
 	char buf[1024];
 	REQUIRE(recvSock.Receive(&buf, sizeof(buf)).GetBytes() > 0);
 	std::cout << buf << std::endl;
 
 	/*
-	GIVEN("Some file-backed shared memory") {
+	GIVEN ("Some file-backed shared memory") {
 		static const size_t packetSize = 2048;
 		static const size_t blockCount = 64;
 		SharedMemory testFile;
@@ -64,12 +64,12 @@ SCENARIO("Unordered", "[PacketMemory], [SharedMemory]") {
 		SharedMemorySection metadataSection(testFile, SharedMemorySection::GetOffsetSize());
 		PacketMemory *pMem = new(metadataSection.Data()) PacketMemory(SharedMemorySection::GetOffsetSize(), packetSize * blockCount);
 
-		WHEN("The shared memory is opened and the data modified") {
+		WHEN ("The shared memory is opened and the data modified") {
 			SharedMemory testFile2;
 
 			REQUIRE(testFile2.OpenFileBacked("Test 1") == SharedMemory::LOAD_SUCCESS);
 
-			THEN("The memory in the created shared memory section matches the memory in the opened shared memory section") {
+			THEN ("The memory in the created shared memory section matches the memory in the opened shared memory section") {
 				SharedMemorySection section2(testFile2, 4096, SharedMemorySection::GetOffsetSize());
 				SharedMemorySection section21(testFile2, 4096);
 
@@ -91,10 +91,10 @@ SCENARIO("Unordered", "[PacketMemory], [SharedMemory]") {
 			}
 		}
 
-		WHEN("A shared memory section is created with no size") {
+		WHEN ("A shared memory section is created with no size") {
 			SharedMemorySection section2(testFile, 0);
 
-			THEN("The shared memory section is invalid") {
+			THEN ("The shared memory section is invalid") {
 				REQUIRE(section2.Size() == 0);
 				REQUIRE(!section2.Valid());
 			}

@@ -1,11 +1,15 @@
 
 PROJECT_NAME :=smbb
 COMPILE_ARGS :=-D_FILE_OFFSET_BITS=64 -D_LARGE_FILES=1
-SRC :=$(wildcard src/smbb/*.cpp)
-TESTS :=$(patsubst src/%.cpp,%.exe,$(wildcard test/*.cpp))
+LINK_ARGS :=-lrt -ldl
+DIR :=.
+
+SRC :=$(wildcard $(DIR)/src/smbb/*.cxx)
+OBJ :=$(patsubst $(DIR)/src/smbb/%.cxx,obj/%.o,$(SRC))
+TESTS :=$(patsubst $(DIR)/test/%.cxx,%.exe,$(wildcard $(DIR)/test/*.cxx))
 RUN_TESTS :=$(patsubst %.exe,%.exe.run,$(TESTS))
 
-all: $(PROJECT_NAME).a
+all: lib$(PROJECT_NAME).a
 
 tests: $(TESTS)
 
@@ -13,21 +17,21 @@ check: $(RUN_TESTS)
 
 clean:
 	rm -rf obj
-	rm -rf $(PROJECT_NAME).a
+	rm -rf lib$(PROJECT_NAME).a
 	rm -rf $(TESTS)
 
-.PHONY: all tests check $(RUN_TESTS) clean
+.PHONY: all tests check clean
 
-$(PROJECT_NAME).a: $(patsubst src/%.cpp,obj/%.o,$(SRC))
+lib$(PROJECT_NAME).a: $(OBJ)
 	$(AR) $(ARFLAGS) $@ $^
 
-obj/%.o: src/%.cpp
+obj/%.o: $(DIR)/src/smbb/%.cxx
 	mkdir -p $(@D)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMPILE_ARGS) -Isrc -Wall -pedantic -c $< -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMPILE_ARGS) -Wall -pedantic -c $< -o $@
 
 # Tests
-%.exe: test/%.cpp $(PROJECT_NAME).a
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMPILE_ARGS) -Itest/catch2 -Isrc -Wall -pedantic $^ -o $@ -lrt -ldl
+%.exe: $(DIR)/test/%.cxx lib$(PROJECT_NAME).a
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMPILE_ARGS) -I$(DIR)/test/catch2 -I$(DIR)/src -Wall -pedantic -o $@ $^ $(LINK_ARGS)
 
 %.exe.run: %.exe
-	$<
+	./$<

@@ -66,7 +66,8 @@ Time GetMonotonicFrequency() {
 // Gets the UTC time in nanoseconds
 Time GetUTCNs() {
 #ifdef _WIN32
-	static const Time offset = Time(134774) /* days between 1601-01-01 and 1970-01-01 */ * 86400 /* seconds per day */ * 10000000;
+	const Time offset = Time(134774) /* days between 1601-01-01 and 1970-01-01 */ * 86400 /* seconds per day */ * 10000000;
+
 	FILETIME winTime;
 	GetSystemTimeAsFileTime(&winTime);
 	return ((Time(winTime.dwHighDateTime) << 32) + winTime.dwLowDateTime - offset) * 100;

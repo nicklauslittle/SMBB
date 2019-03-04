@@ -26,11 +26,14 @@ SOFTWARE.
 
 #include <cstring>
 
+#include "utilities/StaticCast.h"
+
+#include "IPAddress.h"
+
 #define IP_SOCKET_CONCATENATE(A, B) A ## B
 
 #ifdef _WIN32
 #include <WinSock2.h>
-#include <IPHlpApi.h>
 #include <WS2tcpip.h>
 #ifndef IP_SOCKET_NO_QWAVE
 #include <qos2.h>
@@ -47,8 +50,6 @@ SOFTWARE.
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <net/if.h> // Due to a BSD bug, this must appear before ifaddrs.h
-#include <ifaddrs.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -74,8 +75,6 @@ class IPSocket {
 	static const Handle INVALID_HANDLE = Handle(-1);
 #endif
 
-	template <typename T, typename U> static T StaticCast(const T &, U value) { return static_cast<T>(value); }
-
 	typedef void (*DefaultFunction)();
 
 	// Loads the specified function by name
@@ -99,23 +98,10 @@ class IPSocket {
 	};
 
 public:
-	enum AddressFamily {
-		FAMILY_UNSPECIFIED = AF_UNSPEC,
-		IPV4 = AF_INET,
-		IPV6 = AF_INET6
-	};
-
-	enum Protocol {
-		PROTOCOL_UNSPECIFIED = 0,
-		TCP = SOCK_STREAM,
-		UDP = SOCK_DGRAM
-	};
-
 #ifdef _WIN32
 	typedef char *OptionPointer;
 	typedef const char *ConstOptionPointer;
 
-	typedef int AddressLength;
 	typedef int OptionLength;
 	typedef int DataLength;
 	typedef int ResultLength;
@@ -157,7 +143,6 @@ public:
 	typedef void *OptionPointer;
 	typedef const void *ConstOptionPointer;
 
-	typedef socklen_t AddressLength;
 	typedef socklen_t OptionLength;
 	typedef size_t DataLength;
 	typedef ssize_t ResultLength;
@@ -190,285 +175,6 @@ public:
 	// Returns the last error for a given operation on this thread (note that this must be called immediately following a socket call)
 	static int LastError() { return errno; }
 #endif
-
-	union Address {
-	private:
-		sockaddr_in6 _ipv6;
-		sockaddr_in _ipv4;
-
-	public:
-		typedef char String[64];
-
-		static const size_t MAX_SIZE = sizeof(sockaddr_in6) > sizeof(sockaddr_in) ? sizeof(sockaddr_in6) : sizeof(sockaddr_in);
-
-		// Parses a set of addresses from an address (NULL => loopback, "" => all non-loopback addresses) and service (NULL => any service/port)
-		static ResultLength Parse(Address results[], ResultLength resultsSize, const char *address, const char *service = NULL, bool bindable = false, AddressFamily family = FAMILY_UNSPECIFIED) {
-			addrinfo info = { 0 };
-			addrinfo *result = NULL;
-			ResultLength i = 0;
-
-			if (!address && !service)
-				service = "";
-
-			info.ai_flags = (bindable ? AI_PASSIVE : 0) | AI_V4MAPPED;
-			info.ai_family = family;
-			info.ai_socktype = (!service || !service[0] || (service[0] >= '0' && service[0] <= '9') ? UDP : PROTOCOL_UNSPECIFIED);
-
-#ifndef _WIN32
-			if (address && !address[0]) {
-				unsigned short port = 0;
-				ifaddrs *addresses = NULL;
-
-				// Find the port
-				if (getaddrinfo(NULL, service, &info, &result) == 0) {
-					for (addrinfo *it = result; !port && it; it = it->ai_next) {
-						if (it->ai_family == IPV6 && it->ai_addr)
-							port = ntohs(reinterpret_cast<sockaddr_in6 *>(it->ai_addr)->sin6_port);
-						else if (it->ai_family == IPV4 && it->ai_addr)
-							port = ntohs(reinterpret_cast<sockaddr_in *>(it->ai_addr)->sin_port);
-					}
-
-					freeaddrinfo(result);
-				}
-
-				// Iterate all addresses
-				if (getifaddrs(&addresses) == 0) {
-					for (ifaddrs *it = addresses; i < resultsSize && it; it = it->ifa_next) {
-						if ((family == FAMILY_UNSPECIFIED || family == IPV6) && it->ifa_addr && it->ifa_addr->sa_family == IPV6 && !IsLoopback(reinterpret_cast<sockaddr_in6 *>(it->ifa_addr)->sin6_addr))
-							results[i++] = Address(*reinterpret_cast<sockaddr_in6 *>(it->ifa_addr), port);
-						else if ((family == FAMILY_UNSPECIFIED || family == IPV4) && it->ifa_addr && it->ifa_addr->sa_family == IPV4 && !IsLoopback(reinterpret_cast<sockaddr_in *>(it->ifa_addr)->sin_addr))
-							results[i++] = Address(*reinterpret_cast<sockaddr_in *>(it->ifa_addr), port);
-					}
-
-					freeifaddrs(addresses);
-					return i;
-				}
-			}
-			else
-#endif
-			if (getaddrinfo(address, service, &info, &result) == 0) {
-				for (addrinfo *it = result; i < resultsSize && it; it = it->ai_next) {
-					if (it->ai_family == IPV6 && it->ai_addr)
-						results[i++] = Address(*reinterpret_cast<sockaddr_in6 *>(it->ai_addr));
-					else if (it->ai_family == IPV4 && it->ai_addr)
-						results[i++] = Address(*reinterpret_cast<sockaddr_in *>(it->ai_addr));
-				}
-
-				freeaddrinfo(result);
-				return i;
-			}
-
-			return -1;
-		}
-
-		// Constructs a new address from a native address
-		Address(const sockaddr_in6 &address = sockaddr_in6()) : _ipv6(address) { }
-		Address(const sockaddr_in &address) : _ipv4(address) { }
-
-		// Constructs a new address with a different port
-		Address(const Address &address, unsigned short port) {
-			*this = address;
-
-			if (GetFamily() == IPV6)
-				_ipv6.sin6_port = htons(port);
-			else if (GetFamily() == IPV4)
-				_ipv4.sin_port = htons(port);
-		}
-
-		// Constructs a new address using the parse function
-		Address(const char *address, const char *service = NULL, bool bindable = false, AddressFamily family = FAMILY_UNSPECIFIED) : _ipv6() {
-			Parse(this, 1, address, service, bindable, family);
-		}
-
-		// Get the family of the address
-		AddressFamily GetFamily() const { return static_cast<AddressFamily>(_ipv4.sin_family); }
-
-		// Gets the address pointer
-		sockaddr *GetPointer() const { return const_cast<sockaddr *>(reinterpret_cast<const sockaddr *>(&_ipv4)); }
-
-		// Gets the length of the address
-		AddressLength GetLength() const {
-			if (GetFamily() == IPV6)
-				return sizeof(sockaddr_in6);
-			else if (GetFamily() == IPV4)
-				return sizeof(sockaddr_in);
-
-			return 0;
-		}
-
-		// Gets the port associated with the address
-		short GetPort() const {
-			if (GetFamily() == IPV6)
-				return ntohs(_ipv6.sin6_port);
-			else if (GetFamily() == IPV4)
-				return ntohs(_ipv4.sin_port);
-
-			return 0;
-		}
-
-		// Gets a hash of the address (without the port)
-		size_t Hash() const {
-			static const int multiplier = 16777619;
-			size_t hash = 0x811c9dc5;
-
-			if (GetFamily() == IPV6) {
-				for (size_t i = 0; i < 16; i++)
-					hash = (hash ^ reinterpret_cast<const char *>(&_ipv6.sin6_addr)[i]) * multiplier;
-			}
-			else if (GetFamily() == IPV4) {
-				for (size_t i = 0; i < 4; i++)
-					hash = (hash ^ reinterpret_cast<const char *>(&_ipv4.sin_addr)[i]) * multiplier;
-			}
-
-			return hash;
-		}
-
-		// Checks if the address is the loopback address
-		bool IsLoopback() const {
-			static const char LOOPBACK_IPV6[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
-			static const char LOOPBACK_IP[] = { 127, 0, 0, 1 };
-
-			if (GetFamily() == IPV6)
-				return memcmp(&_ipv6.sin6_addr, LOOPBACK_IPV6, sizeof(LOOPBACK_IPV6)) == 0;
-			else if (GetFamily() == IPV4)
-				return memcmp(&_ipv4.sin_addr, LOOPBACK_IP, sizeof(LOOPBACK_IP)) == 0;
-
-			return false;
-		}
-
-		// Checks if the address is a multicast address
-		bool IsMulticast() const {
-			if (GetFamily() == IPV6)
-				return (*reinterpret_cast<const unsigned char *>(&_ipv6.sin6_addr) & 0xFF) == 0xFF;
-			else if (GetFamily() == IPV4)
-				return (*reinterpret_cast<const unsigned char *>(&_ipv4.sin_addr) & 0xF0) == 0xE0;
-
-			return false;
-		}
-
-		// Gets whether or not the address is valid
-		bool IsValid() const { return GetFamily() != FAMILY_UNSPECIFIED; }
-
-		// Gets the string URI authority (host/port) representation of the address
-		char *ToURI(String buffer, bool includePort = false) const {
-#define IP_SOCKET_GET_DIGIT(VALUE, BUFFER, DIV, SHOW) do { \
-	char digit = static_cast<char>(VALUE / DIV); \
-	VALUE = VALUE % DIV; \
-	SHOW |= digit; \
-\
-	if (SHOW) \
-		*BUFFER++ = '0' + digit; \
-} while (0)
-
-			char *start = buffer;
-			unsigned short port = 0;
-
-			if (GetFamily() == IPV6) {
-				static const char hex[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
-
-				port = ntohs(_ipv6.sin6_port);
-				bool foundZeros = false;
-				bool inZeros = false;
-
-				*buffer++ = '[';
-
-				for (size_t i = 0; i < 8; i++) {
-					unsigned char a = *(reinterpret_cast<const unsigned char *>(&_ipv6.sin6_addr) + 2 * i);
-					unsigned char b = *(reinterpret_cast<const unsigned char *>(&_ipv6.sin6_addr) + 2 * i + 1);
-
-					if (a == 0 && b == 0 && !foundZeros && (inZeros || (i < 7 && 
-							*(reinterpret_cast<const unsigned char *>(&_ipv6.sin6_addr) + 2 * i + 2) == 0 &&
-							*(reinterpret_cast<const unsigned char *>(&_ipv6.sin6_addr) + 2 * i + 3) == 0)))
-						inZeros = true;
-					else {
-						if (inZeros) *buffer++ = ':';
-						if (i)       *buffer++ = ':';
-
-						if (a >> 4)        *buffer++ = hex[a >> 4];
-						if (a)             *buffer++ = hex[a & 0xF];
-						if (a || (b >> 4)) *buffer++ = hex[b >> 4];
-						                   *buffer++ = hex[b & 0xF];
-
-						if (inZeros) {
-							inZeros = false;
-							foundZeros = true;
-						}
-					}
-				}
-
-				if (buffer == start + 1) {
-					*buffer++ = ':';
-					*buffer++ = ':';
-				}
-
-				*buffer++ = ']';
-			}
-			else if (GetFamily() == IPV4) {
-				port = ntohs(_ipv4.sin_port);
-				unsigned long value = ntohl(_ipv4.sin_addr.s_addr);
-
-				for (size_t i = 0; i < 4; i++) {
-					if (i)
-						*buffer++ = '.';
-
-					unsigned char show = 0;
-					unsigned char num = static_cast<unsigned char>(value >> (8 * (3 - i)));
-					IP_SOCKET_GET_DIGIT(num, buffer, 100, show);
-					IP_SOCKET_GET_DIGIT(num, buffer, 10, show);
-					*buffer++ = static_cast<char>('0' + num);
-				}
-			}
-			else
-				return NULL;
-
-			// Append :[port] if desired
-			if (includePort) {
-				*buffer++ = ':';
-
-				unsigned char show = 0;
-				IP_SOCKET_GET_DIGIT(port, buffer, 10000, show);
-				IP_SOCKET_GET_DIGIT(port, buffer, 1000, show);
-				IP_SOCKET_GET_DIGIT(port, buffer, 100, show);
-				IP_SOCKET_GET_DIGIT(port, buffer, 10, show);
-				*buffer++ = static_cast<char>('0' + port);
-			}
-
-			*buffer = 0;
-
-			return start;
-
-#undef IP_SOCKET_GET_DIGIT
-		}
-
-		friend class IPSocket;
-	};
-
-	template <typename T> class Chainable {
-		IPSocket *_socket;
-		T _result;
-
-	public:
-		Chainable(IPSocket *socket, T result) : _socket(socket), _result(result) { }
-
-		// Implicit conversion to the actual result
-		operator T() const { return _result; }
-
-		// Allow chaining using ->
-		IPSocket *operator->() const { return _socket; }
-	};
-
-	enum OpenAttempt {
-		OPEN_ONLY,
-		OPEN_AND_BIND,
-		OPEN_BIND_AND_LISTEN,
-		OPEN_AND_CONNECT
-	};
-
-	enum ConnectResult {
-		CONNECT_SUCCESS,
-		CONNECT_FAILED,
-		CONNECT_PENDING
-	};
 
 	// Stores the results of a single message operation
 	class MessageResult {
@@ -545,7 +251,7 @@ public:
 #endif
 	public:
 		// Creates a message structure around an array of buffers (Note: no error checking is done here, it only provides a cross-platform way to access the data)
-		static Message Make(const Buffer buffers[], size_t bufferCount, const Address *address = NULL) {
+		static Message Make(const Buffer buffers[], size_t bufferCount, const IPAddress *address = NULL) {
 			Message message = { };
 
 			if (address) {
@@ -580,11 +286,10 @@ public:
 
 	public:
 		// Creates a message structure for multiple messages around an array of buffers (Note: no error checking is done here, it only provides a cross-platform way to access the data)
-		static MultiMessagePart Make(const Buffer buffers[], size_t bufferCount, const Address *address = NULL) {
+		static MultiMessagePart Make(const Buffer buffers[], size_t bufferCount, const IPAddress *address = NULL) {
 			MultiMessagePart part = { };
 
 			part._message = Message::Make(buffers, bufferCount, address);
-			
 			return part;
 		}
 
@@ -619,18 +324,32 @@ public:
 		SELECT_CHECK_ALL = SELECT_CAN_READ | SELECT_CAN_WRITE | SELECT_CONNECT_FAILED
 	};
 
-	// A select set can be filled to monitor specific states for sockets.
-	// (To reuse a select set, make a copy before calling Select(), as it modifies the underlying set)
-	class SelectSet {
-		int _max;
-		SelectValue _checks;
+	// Select sets can be filled to monitor specific states for sockets.
+	// (To reuse a select set, make a copy before calling Wait(), as it modifies the underlying sets.
+	//  Some OSes support modifying the FD_SETSIZE during compilation to increase the set size.)
+	class SelectSets {
 		fd_set _readSet;
 		fd_set _writeSet;
 #ifdef _WIN32
 		fd_set _exceptSet;
+#else
+		int _max;
+		SelectValue _checks;
 #endif
 	public:
-		SelectSet() : _max(), _checks() {
+		static bool ShouldPreferSelectOverPoll(size_t maxSockets) {
+#ifdef _WIN32
+			return maxSockets <= FD_SETSIZE;
+#else
+			return false;
+#endif
+		}
+
+		SelectSets()
+#ifndef _WIN32
+			: _max(), _checks()
+#endif
+		{
 			FD_ZERO(&_readSet);
 			FD_ZERO(&_writeSet);
 #ifdef _WIN32
@@ -638,80 +357,120 @@ public:
 #endif
 		}
 
-		friend class IPSocket;
+		// Adds the socket to the select set for monitoring, returning true if successful
+		// (If this ever returns false use polling instead, as the contents of the select sets cannot be updated to contain the socket.)
+		bool AddSocket(const IPSocket &socket, SelectValue toMonitor) {
+#ifdef _WIN32
+			if ((toMonitor & SELECT_CHECK_ALL) == 0)
+				return false;
+
+			if ((toMonitor & SELECT_CAN_READ) != 0) {
+				if (_readSet.fd_count >= FD_SETSIZE)
+					return false;
+
+				FD_SET(socket._handle, &_readSet);
+			}
+
+			if ((toMonitor & SELECT_CAN_WRITE) != 0) {
+				if (_writeSet.fd_count >= FD_SETSIZE)
+					return false;
+
+				FD_SET(socket._handle, &_writeSet);
+			}
+
+			if ((toMonitor & SELECT_CONNECT_FAILED) != 0) {
+				if (_exceptSet.fd_count >= FD_SETSIZE)
+					return false;
+
+				FD_SET(socket._handle, &_exceptSet);
+			}
+#else
+			if ((toMonitor & SELECT_CHECK_ALL) == 0 || socket._handle >= FD_SETSIZE)
+				return false;
+
+			if (socket._handle > _max)
+				_max = socket._handle;
+
+			if ((toMonitor & SELECT_CAN_READ) != 0)
+				FD_SET(socket._handle, &_readSet);
+
+			if ((toMonitor & (SELECT_CAN_WRITE | SELECT_CONNECT_FAILED)) != 0)
+				FD_SET(socket._handle, &_writeSet);
+
+			_checks = static_cast<SelectValue>(_checks | (toMonitor & SELECT_CHECK_ALL));
+#endif
+			return true;
+		}
+
+		// Removes the socket from the select set for monitoring
+		void RemoveSocket(const IPSocket &socket, SelectValue toMonitor) {
+#ifdef _WIN32
+			if ((toMonitor & SELECT_CAN_READ) != 0)
+				FD_CLR(socket._handle, &_readSet);
+
+			if ((toMonitor & SELECT_CAN_WRITE) != 0)
+				FD_CLR(socket._handle, &_writeSet);
+
+			if ((toMonitor & SELECT_CONNECT_FAILED) != 0)
+				FD_CLR(socket._handle, &_exceptSet);
+#else
+			if (socket._handle >= FD_SETSIZE)
+				return;
+
+			if ((toMonitor & SELECT_CAN_READ) != 0)
+				FD_CLR(socket._handle, &_readSet);
+
+			if ((toMonitor & (SELECT_CAN_WRITE | SELECT_CONNECT_FAILED)) != 0)
+				FD_CLR(socket._handle, &_writeSet);
+#endif
+		}
+
+		// Waits for either a timeout or one of the sockets specified to be able to receive data / accept a connection or become connected / available to send
+		// (This function normalizes the behaviors between Windows / POSIX to be more like the POSIX standards)
+		int Wait(unsigned long timeoutUs = static_cast<unsigned long>(-1)) {
+#ifdef _WIN32
+			if (_readSet.fd_count == 0 && _writeSet.fd_count == 0 && _exceptSet.fd_count == 0) {
+				Sleep(timeoutUs / 1000);
+				return 0;
+			}
+#endif
+			// Populate the timeout
+			timeval timeout;
+
+			timeout.tv_sec = timeoutUs / 1000000;
+			timeout.tv_usec = timeoutUs % 1000000;
+#ifdef _WIN32
+			return select(0, _readSet.fd_count != 0 ? &_readSet : NULL, _writeSet.fd_count != 0 ? &_writeSet : NULL, _exceptSet.fd_count != 0 ? &_exceptSet : NULL, &timeout);
+#else
+			return select(_max + 1, (_checks & SELECT_CAN_READ) != 0 ? &_readSet : NULL, (_checks & (SELECT_CAN_WRITE | SELECT_CONNECT_FAILED)) != 0 ? &_writeSet : NULL, NULL, &timeout);
+#endif
+		}
+
+		// Tests the socket for the specified values after a call to Wait(), returning the set values
+		SelectValue TestSocket(const IPSocket &socket, SelectValue checkResult) {
+#ifdef _WIN32
+			if ((checkResult & SELECT_CONNECT_FAILED) != 0 && FD_ISSET(socket._handle, &_exceptSet) == 0)
+				checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CONNECT_FAILED);
+#else
+			if ((checkResult & SELECT_CONNECT_FAILED) != 0) {
+				if (checkResult & (FD_ISSET(socket._handle, &_writeSet) == 0))
+					checkResult = static_cast<SelectValue>(checkResult & ~(SELECT_CONNECT_FAILED | SELECT_CAN_WRITE));
+				else
+					checkResult = static_cast<SelectValue>(socket.GetError() == 0 ? ~SELECT_CONNECT_FAILED : ~SELECT_IS_CONNECTED);
+			}
+			else
+#endif
+				if ((checkResult & SELECT_CAN_WRITE) != 0 && FD_ISSET(socket._handle, &_writeSet) == 0)
+					checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CAN_WRITE);
+
+			if ((checkResult & SELECT_CAN_READ) != 0 && FD_ISSET(socket._handle, &_readSet) == 0)
+				checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CAN_READ);
+
+			return static_cast<SelectValue>(checkResult & SELECT_CHECK_ALL);
+		}
 	};
 
-	// Adds the socket to the select set for monitoring
-	// (This may not work with more than 64 sockets being monitored for a particular value, or if socket fd is greater than FD_SETSIZE.
-	// If these cannot be controlled, use polling instead.)
-	void AddToSelectSet(SelectSet &set, SelectValue toMonitor) const {
-		if ((toMonitor & SELECT_CHECK_ALL) == 0)
-			return;
-#ifndef _WIN32
-		set._max = set._max > _handle ? set._max : _handle;
-#endif
-		set._checks = static_cast<SelectValue>(set._checks | (toMonitor & SELECT_CHECK_ALL));
-
-		if ((toMonitor & SELECT_CAN_READ) != 0)
-			FD_SET(_handle, &set._readSet);
-#ifdef _WIN32
-		if ((toMonitor & SELECT_CAN_WRITE) != 0)
-			FD_SET(_handle, &set._writeSet);
-
-		if ((toMonitor & SELECT_CONNECT_FAILED) != 0)
-			FD_SET(_handle, &set._exceptSet);
-#else
-		if ((toMonitor & (SELECT_CAN_WRITE | SELECT_CONNECT_FAILED)) != 0)
-			FD_SET(_handle, &set._writeSet);
-#endif
-	}
-
-	// Waits for either a timeout or one of the sockets specified to be able to receive data / accept a connection or become connected / available to send
-	// (This function normalizes the behaviors between Windows / POSIX to be more like the POSIX standards)
-	static int Select(SelectSet &set, unsigned long timeoutUs = unsigned long(-1))
-	{
-#ifdef _WIN32
-		if (set._checks == SELECT_NO_CHECK) {
-			Sleep(timeoutUs / 1000);
-			return 0;
-		}
-#endif
-		// Populate the timeout
-		timeval timeout;
-
-		timeout.tv_sec = timeoutUs / 1000000;
-		timeout.tv_usec = timeoutUs % 1000000;
-
-		return select(set._max + 1, (set._checks & SELECT_CAN_READ) != 0 ? &set._readSet : NULL, (set._checks & SELECT_CAN_WRITE) != 0 ? &set._writeSet : NULL,
-#ifdef _WIN32
-			(set._checks & 0x4) != 0 ? &set._exceptSet : NULL, &timeout);
-#else
-			NULL, &timeout);
-#endif
-	}
-
-	// Checks if the socket is in the select set with the appropriate result(s) set, returning the set values
-	SelectValue IsInSelectSet(SelectSet &set, SelectValue checkResult) const {
-#ifdef _WIN32
-		if ((checkResult & SELECT_CONNECT_FAILED) != 0 && FD_ISSET(_handle, &set._exceptSet) == 0)
-			checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CONNECT_FAILED);
-#else
-		if ((checkResult & SELECT_CONNECT_FAILED) != 0)
-			checkResult = static_cast<SelectValue>(checkResult & (FD_ISSET(_handle, &set._writeSet) == 0 ? SELECT_CHECK_ALL : (GetError() == 0 ? ~SELECT_CONNECT_FAILED : ~SELECT_IS_CONNECTED)));
-		else
-#endif
-		if ((checkResult & SELECT_CAN_WRITE) != 0 && FD_ISSET(_handle, &set._writeSet) == 0)
-			checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CAN_WRITE);
-
-		if ((checkResult & SELECT_CAN_READ) != 0 && FD_ISSET(_handle, &set._readSet) == 0)
-			checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CAN_READ);
-
-		return static_cast<SelectValue>(checkResult & SELECT_CHECK_ALL);
-	}
-
 	// Support for poll()
-	typedef struct pollfd PollItem;
-
 	enum PollValue {
 		POLL_NO_CHECK = 0,
 		POLL_CAN_READ = POLLIN,
@@ -719,109 +478,113 @@ public:
 		POLL_CAN_WRITE = POLLOUT,
 		POLL_IS_CONNECTED = POLLOUT,
 		POLL_DISCONNECTING = POLLHUP, // The socket is disconnecting, continue reading until a successful read returns 0 for connected sockets (no guarantee this will be returned for a socket)
-		POLL_ERROR = POLLERR
+		POLL_ERROR = POLLERR, // Use this for detecting hard disconnects or other error values not including a failed connection
+		POLL_CHECK_ALL = POLL_CAN_READ | POLL_CAN_WRITE | POLL_DISCONNECTING
 	};
 
-	// Gets the poll item for this socket
-	// (The value to monitor can be empty, in which case status will be returned, but no events will be monitored.)
-	PollItem GetPollItem(PollValue toMonitor) const {
-		PollItem item = PollItem();
+	class PollItem {
+		struct pollfd _item;
 
-		item.fd = _handle;
-		item.events = static_cast<short>(toMonitor);
-		return item;
-	}
+		// Gets the disabled version of the handle
+		Handle GetDisabledHandle() const { return _item.fd | (Handle(1) << (sizeof(Handle) * 8 - 1)); }
 
-	// Waits for either a timeout or one of the sockets specified to receive or become connected / available to send
-	static int Poll(PollItem items[], unsigned int numItems, int timeoutMs = -1) {
+		// Gets the enabled version of the handle
+		Handle GetEnabledHandle() const { return _item.fd & ~(Handle(1) << (sizeof(Handle) * 8 - 1)); }
+
+	public:
+		// Gets a poll item for the specified socket
+		// (The value to monitor can be empty, in which case status will be returned, but no events will be monitored.)
+		static PollItem Make(const IPSocket &socket, PollValue monitor = POLL_NO_CHECK) {
+			PollItem item = { };
+
+			item._item.fd = socket._handle;
+			item._item.events = static_cast<short>(monitor & POLL_CHECK_ALL);
+			return item;
+		}
+
+		// Checks if the poll item is enabled
+		bool IsEnabled() const { return (_item.fd & (Handle(1) << (sizeof(Handle) * 8 - 1))) == 0; }
+
+		// Disables the poll item
+		void Disable() { _item.fd = GetDisabledHandle(); }
+
+		// Enables the poll item
+		void Enable() { _item.fd = GetEnabledHandle(); }
+
+		// Gets the value to monitor
+		PollValue GetMonitor() const { return static_cast<PollValue>(_item.events); }
+
+		// Sets the value to monitor
+		void SetMonitor(PollValue value) { _item.events = static_cast<short>(value & POLL_CHECK_ALL); }
+
+		// Checks if the specified item indicates a failed connection attempt after a poll
+		bool HasFailedConnectionResult() const {
 #ifdef _WIN32
-		if (numItems == 0) {
+			if (!IsEnabled() || _item.revents != 0)
+				return false;
+
+			timeval timeout = {};
+			fd_set exceptSet;
+
+			FD_ZERO(&exceptSet);
+			FD_SET(_item.fd, &exceptSet);
+
+			return select(0, NULL, NULL, &exceptSet, &timeout) == 1;
+#else
+			return (_item.revents & POLL_ERROR) != 0;
+#endif
+		}
+
+		// Checks if the specified result is set after a poll
+		bool HasResult(PollValue value) const { return (_item.revents & value) != 0; }
+
+		// Gets the results after a poll
+		PollValue GetResult() const { return static_cast<PollValue>(_item.revents); }
+
+		// Gets the socket associated a poll item
+		IPSocket GetSocket() const { return IPSocket(GetEnabledHandle()); }
+	};
+
+	// Waits for one of the sockets in the specified set to receive or become connected / available to send or for a timeout
+	// (Use a sane timeout value, as some OSes do not return early when an outgoing connection attempt fails.)
+	static int Poll(PollItem set[], unsigned int numItems, int timeoutMs = 0) {
+#ifdef _WIN32
+		unsigned int i;
+
+		// Find at least one enabled item
+		for (i = 0; i < numItems && !set[i].IsEnabled(); i++);
+
+		if (i >= numItems) {
 			Sleep(timeoutMs);
 			return 0;
 		}
 
-		return WSAPoll(items, numItems, timeoutMs);
+		return WSAPoll(reinterpret_cast<struct pollfd *>(set), numItems, timeoutMs);
 #else
-		return poll(items, numItems, timeoutMs);
+		return poll(reinterpret_cast<struct pollfd *>(set), numItems, timeoutMs);
 #endif
-	}
-
-	// Gets the result of polling the item
-	static PollValue GetPollResult(const PollItem &item) {
-		return static_cast<PollValue>(item.revents);
 	}
 
 private:
-	// Gets the interface index from the address
-	static int GetIndexFrom(const Address &address) {
-		// Check for empty; if empty return 0
-		static const Address EMPTY_ADDRESS;
-
-		if (address.GetFamily() == IPV6) {
-			if (memcmp(&address._ipv6.sin6_addr, &EMPTY_ADDRESS._ipv6.sin6_addr, sizeof(EMPTY_ADDRESS._ipv6.sin6_addr)) == 0)
-				return 0;
-		}
-		else if (address.GetFamily() != IPV4 || address._ipv4.sin_addr.s_addr == 0)
-			return 0;
-
-		// Go through all available address
-		int result = -1;
-#ifdef _WIN32
-		IP_ADAPTER_ADDRESSES stackBuffer[32];
-		ULONG bufferSize = static_cast<ULONG>(sizeof(stackBuffer));
-
-		for (IP_ADAPTER_ADDRESSES *buffer = stackBuffer; buffer; buffer = reinterpret_cast<IP_ADAPTER_ADDRESSES *>(malloc(bufferSize))) {
-			ULONG getAdaptersResult = GetAdaptersAddresses(address.GetFamily(), GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_FRIENDLY_NAME, NULL, buffer, &bufferSize);
-
-			if (getAdaptersResult == NO_ERROR) {
-				for (IP_ADAPTER_ADDRESSES *it = buffer; result < 0 && it; it = it->Next) {
-					for (IP_ADAPTER_UNICAST_ADDRESS *addr = it->FirstUnicastAddress; result < 0 && addr; addr = addr->Next) {
-						if (address.GetFamily() == IPV6 && addr->Address.lpSockaddr && memcmp(&reinterpret_cast<sockaddr_in6 *>(addr->Address.lpSockaddr)->sin6_addr, &address._ipv6.sin6_addr, sizeof(address._ipv6.sin6_addr)) == 0)
-							result = static_cast<int>(it->Ipv6IfIndex);
-						else if (address.GetFamily() == IPV4 && addr->Address.lpSockaddr && reinterpret_cast<sockaddr_in *>(addr->Address.lpSockaddr)->sin_addr.s_addr == address._ipv4.sin_addr.s_addr)
-							result = static_cast<int>(it->IfIndex);
-					}
-				}
-			}
-
-			if (buffer != stackBuffer)
-				free(buffer);
-
-			if (getAdaptersResult != ERROR_BUFFER_OVERFLOW)
-				break;
-		}
-#else
-		ifaddrs *addresses = NULL;
-
-		if (getifaddrs(&addresses) == 0) {
-			for (ifaddrs *it = addresses; result < 0 && it; it = it->ifa_next) {
-				if (it->ifa_addr && address.GetFamily() == it->ifa_addr->sa_family && (
-					(address.GetFamily() == IPV6 && memcmp(&reinterpret_cast<sockaddr_in6 *>(it->ifa_addr)->sin6_addr, &address._ipv6.sin6_addr, sizeof(address._ipv6.sin6_addr)) == 0) ||
-					(address.GetFamily() == IPV4 && reinterpret_cast<sockaddr_in *>(it->ifa_addr)->sin_addr.s_addr == address._ipv4.sin_addr.s_addr)))
-					result = if_nametoindex(it->ifa_name);
-			}
-
-			freeifaddrs(addresses);
-		}
-#endif
-		return result;
-	}
-
-	AddressFamily _family;
 	Handle _handle;
 
-	// Disable copying
-	IPSocket(const IPSocket &) { }
-	IPSocket &operator=(const IPSocket &) { return *this; }
+	IPSocket(Handle handle) : _handle(handle) { }
 
-	// Gets the specified option on the socket, returning the default if unsuccessful
-	template <typename T, typename OptionT> T GetOptionInternal(int level, int name, T defaultValue) const {
-		OptionT value;
+	// Gets the specified option on the socket, returning true if successful
+	template <typename T, typename OptionT> bool GetOptionInternal(int level, int name, T &value) const {
+		OptionT valueOfOption;
 		OptionLength valueLen = static_cast<OptionLength>(sizeof(OptionT));
 
-		if (getsockopt(_handle, level, name, reinterpret_cast<OptionPointer>(&value), &valueLen) == 0)
-			return static_cast<T>(value);
+		if (getsockopt(_handle, level, name, reinterpret_cast<OptionPointer>(&valueOfOption), &valueLen) != 0)
+			return false;
 
+		value = static_cast<T>(valueOfOption);
+		return true;
+	}
+
+	// Gets the specified option on the socket, returning true if successful
+	template <typename T, typename OptionT> T GetOptionInternalDefault(int level, int name, T defaultValue) const {
+		(void)GetOptionInternal<T, OptionT>(level, name, defaultValue);
 		return defaultValue;
 	}
 
@@ -832,27 +595,30 @@ private:
 	}
 
 	// Performs a multicast address operation (subscribe, unsubscribe) on a socket
-	bool ManageMulticastAddress(bool subscribe, const Address &multicastAddress, const Address &localAddress) {
-		if (_family == IPV6) {
+	bool ManageMulticastAddress(bool subscribe, const IPAddress &multicastAddress, const IPAddress &localAddress) {
+		if (multicastAddress.GetFamily() == IPV4) {
+			ip_mreq request;
+
+			request.imr_multiaddr = multicastAddress._ipv4.sin_addr;
+			request.imr_interface = localAddress._ipv4.sin_addr;
+
+			return setsockopt(_handle, IPPROTO_IP, subscribe ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<ConstOptionPointer>(&request), static_cast<OptionLength>(sizeof(request))) == 0;
+		}
+		else if (multicastAddress.GetFamily() == IPV6) {
 			ipv6_mreq requestV6;
 
 			requestV6.ipv6mr_multiaddr = multicastAddress._ipv6.sin6_addr;
-			requestV6.ipv6mr_interface = static_cast<unsigned int>(GetIndexFrom(localAddress));
+			requestV6.ipv6mr_interface = static_cast<unsigned int>(localAddress.GetInterfaceIndex());
 
 			return setsockopt(_handle, IPPROTO_IPV6, subscribe ? IPV6_ADD_MEMBERSHIP : IPV6_DROP_MEMBERSHIP, reinterpret_cast<ConstOptionPointer>(&requestV6), static_cast<OptionLength>(sizeof(requestV6))) == 0;
 		}
 
-		ip_mreq request;
-
-		request.imr_multiaddr = multicastAddress._ipv4.sin_addr;
-		request.imr_interface = localAddress._ipv4.sin_addr;
-
-		return setsockopt(_handle, IPPROTO_IP, subscribe ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<ConstOptionPointer>(&request), static_cast<OptionLength>(sizeof(request))) == 0;
+		return false;
 	}
 
 	// Performs a multicast source address operation (subscribe, unsubscribe) on a socket
-	bool ManageMulticastSourceAddress(bool subscribe, const Address &multicastAddress, const Address &sourceAddress, const Address &localAddress) {
-		if (_family == IPV4) {
+	bool ManageMulticastSourceAddress(bool subscribe, const IPAddress &multicastAddress, const IPAddress &sourceAddress, const IPAddress &localAddress) {
+		if (multicastAddress.GetFamily() == IPV4) {
 			ip_mreq_source request;
 
 			request.imr_multiaddr = multicastAddress._ipv4.sin_addr;
@@ -866,32 +632,53 @@ private:
 	}
 
 public:
-	IPSocket() : _family(FAMILY_UNSPECIFIED), _handle(INVALID_HANDLE) { }
-	IPSocket(const Address &address, Protocol protocol, OpenAttempt openAttempt = OPEN_ONLY) : _handle(INVALID_HANDLE) { (void)Open(address, protocol, openAttempt); }
+	enum OpenAttempt {
+		OPEN_ONLY,
+		OPEN_AND_BIND,
+		OPEN_BIND_AND_LISTEN,
+		OPEN_AND_CONNECT
+	};
 
-	virtual ~IPSocket() { (void)Close(); }
+	// Allow chaining certain function calls together
+	template <typename T> class Chainable {
+		IPSocket *_socket;
+		T _result;
 
-	// Swap socket values
-	IPSocket &Swap(IPSocket &other) {
-		AddressFamily family = other._family;
-		other._family = _family;
-		_family = family;
+	public:
+		Chainable(IPSocket *socket, T result) : _socket(socket), _result(result) { }
 
-		Handle handle = other._handle;
-		other._handle = _handle;
-		_handle = handle;
+		// Implicit conversion to the actual result
+		operator T() const { return _result; }
 
-		return *this;
+		// Allow chaining using ->
+		IPSocket *operator->() const { return _socket; }
+	};
+
+	IPSocket() : _handle(INVALID_HANDLE) { }
+	IPSocket(IPAddressFamily family, IPProtocol protocol) : _handle(INVALID_HANDLE) { (void)Open(family, protocol); }
+	IPSocket(const IPAddress &address, IPProtocol protocol, OpenAttempt openAttempt = OPEN_ONLY) : _handle(INVALID_HANDLE) { (void)Open(address, protocol, openAttempt); }
+
+	virtual ~IPSocket() { }
+
+	bool operator==(const IPSocket &other) const { return _handle == other._handle; }
+	bool operator!=(const IPSocket &other) const { return _handle != other._handle; }
+	bool operator>=(const IPSocket &other) const { return _handle >= other._handle; }
+	bool operator>(const IPSocket &other) const { return _handle > other._handle; }
+	bool operator<=(const IPSocket &other) const { return _handle <= other._handle; }
+	bool operator<(const IPSocket &other) const { return _handle < other._handle; }
+
+	// Opens the socket (if it is not already open) for the given address and protocol
+	Chainable<bool> Open(IPAddressFamily family, IPProtocol protocol) {
+		if (IsValid())
+			return Chainable<bool>(this, false);
+
+		_handle = socket(static_cast<int>(family), static_cast<int>(protocol), 0);
+		return Chainable<bool>(this, IsValid());
 	}
 
 	// Opens the socket for the given address and protocol
-	Chainable<bool> Open(const Address &address, Protocol protocol, OpenAttempt openAttempt = OPEN_ONLY) {
-		(void)Close();
-
-		_family = address.GetFamily();
-		_handle = socket(static_cast<int>(_family), static_cast<int>(protocol), 0);
-
-		if (IsValid()) {
+	Chainable<bool> Open(const IPAddress &address, IPProtocol protocol, OpenAttempt openAttempt = OPEN_ONLY) {
+		if (Open(address.GetFamily(), protocol)) {
 #if defined(SO_SIGNOPIPE)
 			(void)SetOptionInternal<int>(SOL_SOCKET, SO_NOSIGPIPE, 1);
 #endif
@@ -915,11 +702,20 @@ public:
 	bool IsValid() const { return _handle != INVALID_HANDLE; }
 
 	// Gets the local address that is bound to the socket
-	Address GetAddress() const {
-		Address address;
-		AddressLength addressLength = Address::MAX_SIZE;
+	IPAddress GetAddress() const {
+		IPAddress address;
+		IPAddressLength addressLength = sizeof(address);
 
 		(void)getsockname(_handle, address.GetPointer(), &addressLength);
+		return address;
+	}
+
+	// Gets the address of the peer connected to the socket
+	IPAddress GetPeerAddress() const {
+		IPAddress address;
+		IPAddressLength addressLength = sizeof(address);
+
+		(void)getpeername(_handle, address.GetPointer(), &addressLength);
 		return address;
 	}
 
@@ -955,12 +751,12 @@ public:
 
 	// Gets the error associated with the socket
 	int GetError() const {
-		return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_ERROR, 0);
+		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_ERROR, 0);
 	}
 
 	// Checks the socket option to allow immediate send on a socket
 	bool GetImmediateSend() const {
-		return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_TCP, TCP_NODELAY, 0) != 0;
+		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_TCP, TCP_NODELAY, 0) != 0;
 	}
 
 	// Sets the socket option to allow immediate send on a socket
@@ -970,7 +766,7 @@ public:
 
 	// Checks the socket option to send keep alive packets on a socket
 	bool GetKeepAlive() const {
-		return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_KEEPALIVE, 0) != 0;
+		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_KEEPALIVE, 0) != 0;
 	}
 
 	// Sets the socket option to to send keep alive packets on a socket
@@ -982,7 +778,7 @@ public:
 	unsigned long GetLingerTime() const {
 		linger value = { };
 
-		value = GetOptionInternal<GET_OPTION_TYPE(linger, linger)>(SOL_SOCKET, SO_LINGER, value);
+		(void)GetOptionInternal<GET_OPTION_TYPE(linger, linger)>(SOL_SOCKET, SO_LINGER, value);
 		return value.l_onoff ? value.l_linger * 1000UL : 0UL;
 	}
 
@@ -998,15 +794,15 @@ public:
 
 	// Gets an estimated path MTU for outgoing packets (TCP only)
 	int GetMTU() const {
-#ifdef IPV6_MTU
-		if (_family == IPV6)
-			return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MTU, 0);
-#endif
+		int mtu = 0;
 #ifdef IP_MTU
-		if (_family == IPV4)
-			return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MTU, 0);
+		if (GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MTU, mtu))
+			return mtu;
 #endif
-		return 0;
+#ifdef IPV6_MTU
+		(void)GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MTU, mtu);
+#endif
+		return mtu;
 	}
 
 	enum MTUDiscover {
@@ -1030,28 +826,28 @@ public:
 
 	// Gets the MTU discover option (TCP only)
 	MTUDiscover GetMTUDiscover() const {
-#ifdef IPV6_MTU_DISCOVER
-		if (_family == IPV6)
-			return static_cast<MTUDiscover>(GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MTU_DISCOVER, MTU_DISCOVER_DEFAULT));
-#endif
+		int mtuDiscover = MTU_DISCOVER_DEFAULT;
 #ifdef IP_MTU_DISCOVER
-		if (_family == IPV4)
-			return static_cast<MTUDiscover>(GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MTU_DISCOVER, MTU_DISCOVER_DEFAULT));
+		if (GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MTU_DISCOVER, mtuDiscover))
+			return static_cast<MTUDiscover>(mtuDiscover);
 #endif
-		return MTU_DISCOVER_DEFAULT;
+#ifdef IPV6_MTU_DISCOVER
+		(void)GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MTU_DISCOVER, mtuDiscover);
+#endif
+		return static_cast<MTUDiscover>(mtuDiscover);
 	}
 
 	// Sets the MTU discover option (TCP only)
 	Chainable<bool> SetMTUDiscover(MTUDiscover value) {
-#ifdef IPV6_MTU_DISCOVER
-		if (_family == IPV6)
-			return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MTU_DISCOVER, value));
-#endif
-#ifdef IP_MTU_DISCOVER
-		if (_family == IPV4)
-			return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MTU_DISCOVER, value));
-#endif
 		(void)value;
+#ifdef IP_MTU_DISCOVER
+		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MTU_DISCOVER, value))
+			return Chainable<bool>(this, true);
+#endif
+#ifdef IPV6_MTU_DISCOVER
+		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MTU_DISCOVER, value))
+			return Chainable<bool>(this, true);
+#endif
 		return Chainable<bool>(this, false);
 	}
 
@@ -1068,7 +864,7 @@ public:
 
 	// Gets the receive buffer size for the socket
 	int GetReceiveBufferSize() const {
-		return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_RCVBUF, 0);
+		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_RCVBUF, 0);
 	}
 
 	// Sets the receive buffer size for the socket
@@ -1078,7 +874,7 @@ public:
 
 	// Checks the socket option to reuse the address (address reuse means wildcard and specific binds are allowed on same port, port reuse is allowed on multicast subscriptions) and ignore the time wait state on a socket
 	bool GetReuseAddress() const {
-		return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_REUSEADDR, 0) != 0;
+		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_REUSEADDR, 0) != 0;
 	}
 
 	// Sets the socket option to reuse the address (address reuse means wildcard and specific binds are allowed on same port, port reuse is allowed on multicast subscriptions) and ignore the time wait state on a socket
@@ -1092,7 +888,7 @@ public:
 	// Checks the socket option to reuse the port on a socket (does not work on all OSes)
 	bool GetReusePort() const {
 #ifdef SO_REUSEPORT
-		return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_REUSEPORT, 0) != 0;
+		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_REUSEPORT, 0) != 0;
 #else
 		return false;
 #endif
@@ -1110,7 +906,7 @@ public:
 
 	// Gets the send buffer size for the socket
 	int GetSendBufferSize() const {
-		return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_SNDBUF, 0);
+		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_SNDBUF, 0);
 	}
 
 	// Sets the send buffer size for the socket
@@ -1149,15 +945,15 @@ public:
 
 	// Gets the type of service option (may not work on all OSes)
 	TypeOfService GetTOS() const {
-#ifdef IPV6_TCLASS
-		if (_family == IPV6)
-			return static_cast<TypeOfService>(GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_TCLASS, 0));
-#endif
+		int tos = 0;
 #ifdef IP_TOS
-		if (_family == IPV4)
-			return static_cast<TypeOfService>(GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_TOS, 0));
+		if (GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_TOS, tos))
+			return static_cast<TypeOfService>(tos);
 #endif
-		return static_cast<TypeOfService>(0);
+#ifdef IPV6_TCLASS
+		(void)GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_TCLASS, tos);
+#endif
+		return static_cast<TypeOfService>(tos);
 	}
 
 	// Sets the type of service option
@@ -1166,13 +962,13 @@ public:
 		DSCPData data;
 		return SetDSCP(static_cast<DSCP>(value >> 2), data);
 #else
-#ifdef IPV6_TCLASS
-		if (_family == IPV6)
-			return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_TCLASS, value & TOS_MASK));
-#endif
 #ifdef IP_TOS
-		if (_family == IPV4)
-			return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_TOS, value & TOS_MASK));
+		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_TOS, value & TOS_MASK))
+			return Chainable<bool>(this, true);
+#endif
+#ifdef IPV6_TCLASS
+		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_TCLASS, value & TOS_MASK))
+			return Chainable<bool>(this, true);
 #endif
 		(void)value;
 		return Chainable<bool>(this, false);
@@ -1223,12 +1019,12 @@ public:
 	// DSCP Helper Data
 	struct DSCPData {
 #ifdef _WIN32
-		Address _address;
+		IPAddress _address;
 		QOS_FLOWID _flow;
 
-		DSCPData(const Address &connectAddress = Address()) : _address(connectAddress), _flow() { }
+		DSCPData(const IPAddress &connectAddress = IPAddress()) : _address(connectAddress), _flow() { }
 #else
-		DSCPData(const Address &connectAddress = Address()) { (void)connectAddress; }
+		DSCPData(const IPAddress &connectAddress = IPAddress()) { (void)connectAddress; }
 #endif
 	};
 
@@ -1246,7 +1042,7 @@ public:
 		return DSCP_DEFAULT_FORWARDING;
 #else
 		(void)data;
-		return GetTOS() >> 2;
+		return static_cast<DSCP>(GetTOS() >> 2);
 #endif
 	}
 
@@ -1271,7 +1067,7 @@ public:
 		return Chainable<bool>(this, false);
 #else
 		(void)data;
-		return SetTOS(value << 2);
+		return SetTOS(static_cast<TypeOfService>(value << 2));
 #endif
 	}
 
@@ -1293,7 +1089,7 @@ public:
 	}
 
 	// Bind the socket
-	Chainable<bool> Bind(const Address &address) {
+	Chainable<bool> Bind(const IPAddress &address) {
 		return Chainable<bool>(this, bind(_handle, address.GetPointer(), address.GetLength()) == 0);
 	}
 
@@ -1303,22 +1099,25 @@ public:
 	}
 
 	// Accept new connections after listening on the socket
-	bool Accept(IPSocket &socket, Address *newAddress = NULL) {
-		IPSocket newSocket;
-		newSocket._family = _family;
+	IPSocket Accept(IPAddress *newAddress = NULL) {
+		IPAddress address;
+		IPAddressLength length = sizeof(address);
+		IPSocket socket = IPSocket(accept(_handle, address.GetPointer(), &length));
 
-		if (newAddress) {
-			AddressLength length = Address::MAX_SIZE;
-			newSocket._handle = accept(_handle, newAddress->GetPointer(), &length);
-		}
-		else
-			newSocket._handle = accept(_handle, NULL, NULL);
+		if (socket.IsValid() && newAddress)
+			*newAddress = address;
 
-		return socket.Swap(newSocket).IsValid();
+		return socket;
 	}
 
+	enum ConnectResult {
+		CONNECT_FAILED = 0,
+		CONNECT_SUCCESS,
+		CONNECT_PENDING
+	};
+
 	// Connect the socket
-	Chainable<ConnectResult> Connect(const Address &address) {
+	Chainable<ConnectResult> Connect(const IPAddress &address) {
 		if (connect(_handle, address.GetPointer(), address.GetLength()) == 0)
 			return Chainable<ConnectResult>(this, CONNECT_SUCCESS);
 
@@ -1342,8 +1141,8 @@ public:
 	}
 
 	// Receive data from the socket
-	MessageResult Receive(void *data, DataLength length, Address &from) {
-		AddressLength addressLength = Address::MAX_SIZE;
+	MessageResult Receive(void *data, DataLength length, IPAddress &from) {
+		IPAddressLength addressLength = sizeof(from);
 		return MessageResult(recvfrom(_handle, reinterpret_cast<char *>(data), length, 0, from.GetPointer(), &addressLength));
 	}
 
@@ -1393,7 +1192,7 @@ public:
 	}
 
 	// Send data to the specific address on the socket
-	MessageResult Send(const Address &address, const void *data, DataLength length) {
+	MessageResult Send(const IPAddress &address, const void *data, DataLength length) {
 		return MessageResult(sendto(_handle, reinterpret_cast<const char *>(data), length, SEND_FLAGS, address.GetPointer(), address.GetLength()));
 	}
 
@@ -1438,62 +1237,90 @@ public:
 
 	// Gets the number of hops value for outgoing multicast packets
 	int GetMulticastHops() const {
-		if (_family == IPV6)
-			return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_HOPS, -1);
+		int hops = -1;
 
-		return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_TTL, -1);
+		if (GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_TTL, hops))
+			return hops;
+
+		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_HOPS, hops);
 	}
 
 	// Sets the TTL value of the socket for outgoing unicast packets
 	Chainable<bool> SetMulticastHops(int value) {
-		if (_family == IPV6)
-			return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_HOPS, value));
+		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_TTL, value))
+			return Chainable<bool>(this, true);
 
-		return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_TTL, value));
+		return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_HOPS, value));
 	}
 
 	// Gets the number of hops value for outgoing multicast packets
-	int GetMulticastLoopback() const {
-		if (_family == IPV6)
-			return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_LOOP, 0) != 0;
+	bool GetMulticastLoopback() const {
+		int loopback = 0;
 
-		return GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_LOOP, 0) != 0;
+		if (GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_LOOP, loopback))
+			return loopback != 0;
+
+		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_LOOP, loopback) != 0;
 	}
 
 	// Sets the TTL value of the socket for outgoing unicast packets
 	Chainable<bool> SetMulticastLoopback(bool value = true) {
-		if (_family == IPV6)
-			return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_LOOP, value ? 1 : 0));
+		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_LOOP, value ? 1 : 0))
+			return Chainable<bool>(this, true);
 
-		return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_LOOP, value ? 1 : 0));
+		return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_LOOP, value ? 1 : 0));
 	}
 
 	// Sets the interface used to send multicast packets
-	Chainable<bool> SetMulticastSendInterface(const Address &localAddress = Address()) {
-		if (_family == IPV6)
-			return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_IF, GetIndexFrom(localAddress)));
+	Chainable<bool> SetMulticastSendInterface(const IPAddress &localAddress = IPAddress()) {
+		if (SetOptionInternal<GET_OPTION_TYPE(in_addr, in_addr)>(IPPROTO_IP, IP_MULTICAST_IF, localAddress._ipv4.sin_addr))
+			return Chainable<bool>(this, true);
 
-		return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(in_addr, in_addr)>(IPPROTO_IP, IP_MULTICAST_IF, localAddress._ipv4.sin_addr));
+		return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_IF, localAddress.GetInterfaceIndex()));
 	}
 
 	// Subscribes to the specified multicast address using the local address
-	Chainable<bool> SubscribeToMulticastAddress(const Address &multicastAddress, const Address &localAddress = Address()) {
+	Chainable<bool> SubscribeToMulticastAddress(const IPAddress &multicastAddress, const IPAddress &localAddress = IPAddress()) {
 		return Chainable<bool>(this, ManageMulticastAddress(true, multicastAddress, localAddress));
 	}
 
 	// Unsubscribes from the specified multicast address using the local address
-	Chainable<bool> UnsubscribeFromMulticastAddress(const Address &multicastAddress, const Address &localAddress = Address()) {
+	Chainable<bool> UnsubscribeFromMulticastAddress(const IPAddress &multicastAddress, const IPAddress &localAddress = IPAddress()) {
 		return Chainable<bool>(this, ManageMulticastAddress(false, multicastAddress, localAddress));
 	}
 
 	// Subscribes to the specified multicast address using the local address
-	Chainable<bool> SubscribeToMulticastSourceAddress(const Address &multicastAddress, const Address &sourceAddress, const Address &localAddress = Address()) {
+	Chainable<bool> SubscribeToMulticastSourceAddress(const IPAddress &multicastAddress, const IPAddress &sourceAddress, const IPAddress &localAddress = IPAddress()) {
 		return Chainable<bool>(this, ManageMulticastSourceAddress(true, multicastAddress, sourceAddress, localAddress));
 	}
 
 	// Unsubscribes from the specified multicast address using the local address
-	Chainable<bool> UnsubscribeFromMulticastSourceAddress(const Address &multicastAddress, const Address &sourceAddress, const Address &localAddress = Address()) {
+	Chainable<bool> UnsubscribeFromMulticastSourceAddress(const IPAddress &multicastAddress, const IPAddress &sourceAddress, const IPAddress &localAddress = IPAddress()) {
 		return Chainable<bool>(this, ManageMulticastSourceAddress(false, multicastAddress, sourceAddress, localAddress));
+	}
+};
+
+// Wraps an IP socket in a safe container that cannot be copied and is automatically closed when it falls out of scope
+class IPSocketGuard : public IPSocket {
+	// Disable public copying / assignment
+	IPSocketGuard(const IPSocketGuard &) { }
+	IPSocketGuard &operator=(const IPSocketGuard &other) { IPSocket::operator=(other); return *this; }
+
+public:
+	IPSocketGuard(const IPSocket &socket = IPSocket()) : IPSocket(socket) { }
+	IPSocketGuard(IPAddressFamily family, IPProtocol protocol) : IPSocket(family, protocol) { }
+	IPSocketGuard(const IPAddress &address, IPProtocol protocol, OpenAttempt openAttempt = OPEN_ONLY) : IPSocket(address, protocol, openAttempt) { }
+
+	virtual ~IPSocketGuard() {
+		if (IsValid())
+			(void)Close();
+	}
+
+	// Swaps the contents of this guard with another, and returns the guard
+	IPSocketGuard &Swap(IPSocketGuard &other) {
+		IPSocket copy = other;
+		other = *this;
+		return *this = copy;
 	}
 };
 
