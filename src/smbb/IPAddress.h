@@ -105,6 +105,20 @@ public:
 		Parse(this, 1, address, service, bindable, family);
 	}
 
+	// Compare to another address
+	bool operator==(const IPAddress &other) const {
+		if (GetFamily() == other.GetFamily()) {
+			if (GetFamily() == IPV4)
+				return memcmp(&_ipv4.sin_addr, &other._ipv4.sin_addr, sizeof(_ipv4.sin_addr)) == 0;
+			else if (GetFamily() == IPV6)
+				return memcmp(&_ipv6.sin6_addr, &other._ipv6.sin6_addr, sizeof(_ipv6.sin6_addr)) == 0;
+		}
+
+		return false;
+	}
+
+	bool operator!=(const IPAddress &other) const { return !(*this == other); }
+
 	// Get the family of the address
 	IPAddressFamily GetFamily() const { return static_cast<IPAddressFamily>(_ipv4.sin_family); }
 
@@ -122,7 +136,7 @@ public:
 	}
 
 	// Gets the address pointer
-	sockaddr *GetPointer() const { return const_cast<sockaddr *>(reinterpret_cast<const sockaddr *>(&_ipv4)); }
+	sockaddr *GetPointer() const { return const_cast<sockaddr *>(reinterpret_cast<const sockaddr *>(this)); }
 
 	// Gets the port associated with the address
 	short GetPort() const {
@@ -191,7 +205,7 @@ public:
 	bool IsValid() const { return GetFamily() != FAMILY_UNSPECIFIED; }
 
 	// Gets the string URI authority (host/port) representation of the address
-	char *ToURI(String buffer, bool includePort = false) const;
+	char *ToURI(String buffer, bool includePort = true) const;
 
 	friend class IPSocket;
 };

@@ -56,5 +56,8 @@
     <ClCompile Include="src\smbb\IPAddress.cxx">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\smbb\IPSocket.cxx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

@@ -62,6 +62,8 @@ SOFTWARE.
 #define GET_OPTION_TYPE(NORMAL_TYPE, WINDOWS_TYPE) NORMAL_TYPE, NORMAL_TYPE
 #endif
 
+struct timespec;
+
 namespace smbb {
 
 class IPSocket {
@@ -78,16 +80,7 @@ class IPSocket {
 	typedef void (*DefaultFunction)();
 
 	// Loads the specified function by name
-	static DefaultFunction FindFunction(const char *name) {
-#if defined(_WIN32) || defined(IP_SOCKET_NO_LOADED_FUNCTIONS)
-		(void)name;
-		return (DefaultFunction)NULL;
-#else
-		static void *program = dlopen(NULL, RTLD_LAZY);
-		union SymbolU { void *pointer; DefaultFunction function; } symbol = { dlsym(program, name) };
-		return symbol.function;
-#endif
-	}
+	static DefaultFunction FindFunction(const char *name);
 
 	template <typename F> struct LoadedFunction {
 		// The function type
@@ -98,6 +91,17 @@ class IPSocket {
 	};
 
 public:
+	// Initializes the socket implementation
+	static bool Initialize();
+
+	// Cleans up the socket implementation
+	static void Finish();
+
+#if defined(MSG_NOSIGNAL)
+	static const int SEND_FLAGS = MSG_NOSIGNAL;
+#else
+	static const int SEND_FLAGS = 0;
+#endif
 #ifdef _WIN32
 	typedef char *OptionPointer;
 	typedef const char *ConstOptionPointer;
@@ -106,39 +110,10 @@ public:
 	typedef int DataLength;
 	typedef int ResultLength;
 
-	static const int SEND_FLAGS = 0;
-	static const int RECV_MULTIPLE_FLAGS = 0;
-	static const ResultLength INVALID_RESULT = ResultLength(-1);
-	static const int FUNCTION_DOESNT_EXIST = ERROR_INVALID_FUNCTION;
-
-	// Initializes the socket implementation
-	static bool Initialize() {
-		WSADATA data;
-
-		if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
-			return false;
-
-		return true;
-	}
-
-	// Cleans up the socket implementation
-	static void Finish() { WSACleanup(); }
-
 	// Returns the last error for a given operation on this thread (note that this must be called immediately following a socket call)
 	static int LastError() { return WSAGetLastError(); }
-#ifndef IP_SOCKET_NO_QWAVE
-	// Gets the QoS handle
-	static HANDLE GetQoSHandle() {
-		static HANDLE qosHandle = INVALID_HANDLE_VALUE;
 
-		if (qosHandle == INVALID_HANDLE_VALUE) {
-			QOS_VERSION version = { 1 };
-			(void)QOSCreateHandle(&version, &qosHandle);
-		}
-
-		return qosHandle;
-	}
-#endif
+	static HANDLE _qosHandle;
 #else
 	typedef void *OptionPointer;
 	typedef const void *ConstOptionPointer;
@@ -146,31 +121,6 @@ public:
 	typedef socklen_t OptionLength;
 	typedef size_t DataLength;
 	typedef ssize_t ResultLength;
-
-#if defined(MSG_NOSIGNAL)
-	static const int SEND_FLAGS = MSG_NOSIGNAL;
-#else
-	static const int SEND_FLAGS = 0;
-#endif
-#if defined(MSG_WAITFORONE)
-	static const int RECV_MULTIPLE_FLAGS = MSG_WAITFORONE;
-#else
-	static const int RECV_MULTIPLE_FLAGS = 0;
-#endif
-	static const ResultLength INVALID_RESULT = ResultLength(-1);
-	static const int FUNCTION_DOESNT_EXIST = ENOSYS;
-
-	// Initializes the socket implementation
-	static bool Initialize() {
-#if !defined(MSG_NOSIGNAL) && !defined(SO_SIGNOPIPE) && !defined(IP_SOCKET_NO_SIGPIPE_IGNORE)
-#warn All pipe signals will be ignored
-		signal(SIGPIPE, SIG_IGN);
-#endif
-		return true;
-	}
-
-	// Cleans up the socket implementation
-	static void Finish() { }
 
 	// Returns the last error for a given operation on this thread (note that this must be called immediately following a socket call)
 	static int LastError() { return errno; }
@@ -181,24 +131,23 @@ public:
 		ResultLength _result;
 		int _error;
 
-		MessageResult(ResultLength result, int error) : _result(result), _error(error) { }
-
 	public:
-		static MessageResult UnimplementedFunction() { return MessageResult(INVALID_RESULT, FUNCTION_DOESNT_EXIST); }
-
+		MessageResult(ResultLength result, int error) : _result(result), _error(error) { }
 		MessageResult(ResultLength result) : _result(result), _error(result < 0 ? LastError() : 0) { }
 
-		// Gets the error from the send
+		// Gets the error from the send or receive (may be set even if the result is positive; will always be zero if there is no error)
 		int GetError() const { return _error; }
 
-		// Gets the number of received bytes
-		ResultLength GetBytes() const { return _result; }
+		// Gets the number of sent or received bytes or messages
+		ResultLength GetResult() const { return _result; }
 
 		// Checks for errors
-		bool HasError() const { return _result < 0; }
+		bool Failed() const { return _result < 0; }
+		bool HasSizeError() const { return _error == IP_SOCKET_ERROR(MSGSIZE); }
 		bool HasTemporaryReceiveError() const { return _error == IP_SOCKET_ERROR(INTR) || _error == IP_SOCKET_ERROR(WOULDBLOCK) || _error == IP_SOCKET_ERROR(AGAIN) || _error == IP_SOCKET_ERROR(NOTCONN); }
 		bool HasTemporarySendError() const { return _error == IP_SOCKET_ERROR(INTR) || _error == IP_SOCKET_ERROR(WOULDBLOCK) || _error == IP_SOCKET_ERROR(AGAIN) || _error == IP_SOCKET_ERROR(NOTCONN) || _error == IP_SOCKET_ERROR(NOBUFS); }
 
+		// Compare results
 		bool operator==(const MessageResult &other) { return _result == other._result && _error == other._error; }
 		bool operator!=(const MessageResult &other) { return !(*this == other); }
 	};
@@ -245,19 +194,17 @@ public:
 			INT        msg_namelen;
 			LPWSABUF   lpBuffers;
 			DWORD      dwBufferCount;
-		} _value;
-#else
-		struct msghdr _value;
+		};
 #endif
+		mutable msghdr _value;
+
 	public:
 		// Creates a message structure around an array of buffers (Note: no error checking is done here, it only provides a cross-platform way to access the data)
 		static Message Make(const Buffer buffers[], size_t bufferCount, const IPAddress *address = NULL) {
 			Message message = { };
 
-			if (address) {
+			if (address)
 				message._value.msg_name = address->GetPointer();
-				message._value.msg_namelen = address->GetLength();
-			}
 #ifdef _WIN32
 			message._value.lpBuffers = reinterpret_cast<WSABUF *>(const_cast<Buffer *>(buffers));
 			message._value.dwBufferCount = static_cast<ULONG>(bufferCount);
@@ -296,6 +243,8 @@ public:
 		// Gets the array of buffers and length from the metadata (Note: no error checking is done here, it only provides a cross-platform way to access the data)
 		Buffer *GetBuffers() const { return _message.GetBuffers(); }
 		size_t GetLength() const { return _message.GetLength(); }
+
+		friend class IPSocket;
 	};
 
 	// Recommended MTU values to minimize fragmentation
@@ -337,14 +286,6 @@ public:
 		SelectValue _checks;
 #endif
 	public:
-		static bool ShouldPreferSelectOverPoll(size_t maxSockets) {
-#ifdef _WIN32
-			return maxSockets <= FD_SETSIZE;
-#else
-			return false;
-#endif
-		}
-
 		SelectSets()
 #ifndef _WIN32
 			: _max(), _checks()
@@ -566,6 +507,13 @@ public:
 	}
 
 private:
+	// Helpers to get the recvmmsg and sendmmsg functions
+	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int, timespec *)> RecvMMsgFunction;
+	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int)> SendMMsgFunction;
+
+	static RecvMMsgFunction::Type _recvMMsg;
+	static SendMMsgFunction::Type _sendMMsg;
+
 	Handle _handle;
 
 	IPSocket(Handle handle) : _handle(handle) { }
@@ -1035,7 +983,7 @@ public:
 		QOS_PACKET_PRIORITY priority;
 		ULONG prioritySize = sizeof(priority);
 
-		if (QOSQueryFlow(GetQoSHandle(), data._flow, QOSQueryPacketPriority, &prioritySize, &priority, 0, NULL)) {
+		if (QOSQueryFlow(_qosHandle, data._flow, QOSQueryPacketPriority, &prioritySize, &priority, 0, NULL)) {
 			return static_cast<DSCP>(priority.ConformantDSCPValue);
 		}
 #endif
@@ -1057,10 +1005,10 @@ public:
 			value == DSCP_SERVICE_LOW_PRIORITY ? QOSTrafficTypeBackground :
 			QOSTrafficTypeBestEffort;
 
-		if (data._flow != 0 || QOSAddSocketToFlow(GetQoSHandle(), _handle, data._address.GetFamily() == FAMILY_UNSPECIFIED ? NULL : data._address.GetPointer(), trafficType, QOS_NON_ADAPTIVE_FLOW, &data._flow)) {
+		if (data._flow != 0 || QOSAddSocketToFlow(_qosHandle, _handle, data._address.GetFamily() == FAMILY_UNSPECIFIED ? NULL : data._address.GetPointer(), trafficType, QOS_NON_ADAPTIVE_FLOW, &data._flow)) {
 			DWORD dscp = value & DSCP_MASK;
 
-			if (QOSSetFlow(GetQoSHandle(), data._flow, QOSSetOutgoingDSCPValue, sizeof(dscp), &dscp, 0, NULL))
+			if (QOSSetFlow(_qosHandle, data._flow, QOSSetOutgoingDSCPValue, sizeof(dscp), &dscp, 0, NULL))
 				return Chainable<bool>(this, true);
 		}
 #endif
@@ -1135,55 +1083,74 @@ public:
 		return Chainable<ConnectResult>(this, CONNECT_FAILED);
 	}
 
+	enum ReceiveFlags {
+		RECEIVE_NORMAL = 0,
+		RECEIVE_PEEK = MSG_PEEK, // Peek at the data, but don't consume it (if data is available, the size returned will be greater than 0, but may be less than the total number of bytes available)
+		RECEIVE_REQUEST_WAIT_FOR_FULL_DATA = MSG_WAITALL, // Request waiting until the full amount of requested data has been consumed (this is not a guarantee, and should not be relied upon)
+#if defined(MSG_WAITFORONE)
+		RECEIVE_REQUEST_ONLY_WAIT_FOR_ONE = MSG_WAITFORONE // Request non-blocking operation after one data packet is consumed when receiving multiple packets (this is not a guarantee, use non-blocking mode if immediate return is required)
+#else
+		RECEIVE_REQUEST_ONLY_WAIT_FOR_ONE = 0 // Request non-blocking operation after one data packet is consumed when receiving multiple packets (this is not a guarantee, use non-blocking mode if immediate return is required)
+#endif
+	};
+
 	// Receive data from the socket
-	MessageResult Receive(void *data, DataLength length) {
-		return MessageResult(recv(_handle, reinterpret_cast<char *>(data), length, 0));
+	MessageResult Receive(void *data, DataLength length, ReceiveFlags flags = RECEIVE_NORMAL) {
+		Buffer buffer = Buffer::Make(data, length);
+		return Receive(Message::Make(&buffer, 1), flags);
 	}
 
 	// Receive data from the socket
-	MessageResult Receive(void *data, DataLength length, IPAddress &from) {
-		IPAddressLength addressLength = sizeof(from);
-		return MessageResult(recvfrom(_handle, reinterpret_cast<char *>(data), length, 0, from.GetPointer(), &addressLength));
+	MessageResult Receive(void *data, DataLength length, IPAddress &from, ReceiveFlags flags = RECEIVE_NORMAL) {
+		Buffer buffer = Buffer::Make(data, length);
+		return Receive(Message::Make(&buffer, 1, &from), flags);
 	}
 
 	// Receive data from the socket
-	MessageResult Receive(const Message &message) {
+	MessageResult Receive(const Message &message, ReceiveFlags flags = RECEIVE_NORMAL) {
 #ifdef _WIN32
 		DWORD bytesReceived;
-		DWORD flags = 0;
-		int result = WSARecvFrom(_handle, message._value.lpBuffers, message._value.dwBufferCount, &bytesReceived, &flags, message._value.msg_name, const_cast<LPINT>(&message._value.msg_namelen), NULL, NULL);
+		DWORD recvflags = flags;
+		int result;
 
-		return MessageResult(result == 0 ? static_cast<int>(bytesReceived) : -1);
+		if (message._value.msg_name) {
+			message._value.msg_namelen = sizeof(IPAddress);
+			result = WSARecvFrom(_handle, message._value.lpBuffers, message._value.dwBufferCount, &bytesReceived, &recvflags, message._value.msg_name, &message._value.msg_namelen, NULL, NULL);
+		}
+		else {
+			result = WSARecv(_handle, message._value.lpBuffers, message._value.dwBufferCount, &bytesReceived, &recvflags, NULL, NULL);
+		}
+
+		if (result == 0)
+			return MessageResult(static_cast<ResultLength>(bytesReceived), 0);
+
+		int error = LastError();
+		return MessageResult(error == IP_SOCKET_ERROR(MSGSIZE) ? static_cast<ResultLength>(bytesReceived) : -1, error);
 #else
-		return MessageResult(recvmsg(_handle, const_cast<struct msghdr *>(&message._value), 0));
+		message._value.msg_namelen = static_cast<int>(message._value.msg_name ? sizeof(IPAddress) : 0);
+		ResultLength result = recvmsg(_handle, &message._value, flags);
+		return MessageResult(result, (result < 0 ? LastError() : ((message._value.msg_flags & MSG_TRUNC) != 0 ? IP_SOCKET_ERROR(MSGSIZE) : 0)));
 #endif
 	}
 
-private:
-	// Helpers to get the recvmmsg function
-	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int, struct timespec *)> RecvMMsgFunction;
+	// Checks if a native receive multiple function is available (otherwise, this is emulated with multiple receive calls)
+	static bool HasNativeReceiveMultiple() { return _recvMMsg != RecvMMsgFunction::Type(); }
 
-	static RecvMMsgFunction::Type GetRecvMMsg() {
-#ifdef _WIN32
-		return RecvMMsgFunction::Type();
-#else
-		static RecvMMsgFunction::Type recvMMsg = RecvMMsgFunction::Load("recvmmsg");
-		return recvMMsg;
-#endif
-	}
+	// Receive multiple data packets from the socket (result is number of messages received)
+	MessageResult ReceiveMultiple(MultiMessagePart parts[], ResultLength length, ReceiveFlags flags = RECEIVE_NORMAL) {
+		if (_recvMMsg)
+			return MessageResult(_recvMMsg(_handle, parts, length, flags, NULL));
 
-public:
-	// Checks if the receive multiple function is available
-	static bool HasReceiveMultiple() { return GetRecvMMsg() != RecvMMsgFunction::Type(); }
+		for (ResultLength i = 0; i < length; i++) {
+			MessageResult result = Receive(parts[i]._message, flags);
 
-	// Receive data from the socket
-	MessageResult ReceiveMultiple(MultiMessagePart parts[], size_t length) {
-		RecvMMsgFunction::Type recvMMsg = GetRecvMMsg();
+			if (result.Failed())
+				return MessageResult(i == 0 ? -1 : i, result.GetError());
 
-		if (recvMMsg)
-			return MessageResult(recvMMsg(_handle, parts, length, RECV_MULTIPLE_FLAGS, NULL));
+			parts[i]._result = result.GetResult();
+		}
 
-		return MessageResult::UnimplementedFunction();
+		return MessageResult(length, 0);
 	}
 
 	// Send data on the socket
@@ -1198,41 +1165,35 @@ public:
 
 	// Send data to the specific address on the socket
 	MessageResult Send(const Message &message) {
+		message._value.msg_namelen = (message._value.msg_name ? reinterpret_cast<const IPAddress *>(message._value.msg_name)->GetLength() : 0);
 #ifdef _WIN32
 		DWORD bytesSent;
 		int result = WSASendTo(_handle, message._value.lpBuffers, message._value.dwBufferCount, &bytesSent, SEND_FLAGS, message._value.msg_name, message._value.msg_namelen, NULL, NULL);
 
 		return MessageResult(result == 0 ? static_cast<int>(bytesSent) : -1);
 #else
-		return MessageResult(sendmsg(_handle, const_cast<struct msghdr *>(&message._value), SEND_FLAGS));
+		return MessageResult(sendmsg(_handle, &message._value, SEND_FLAGS));
 #endif
 	}
 
-private:
-	// Helpers to get the sendmmsg function
-	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int)> SendMMsgFunction;
+	// Checks if a native send multiple function is available (otherwise, this is emulated with multiple send calls)
+	static bool HasNativeSendMultiple() { return _sendMMsg != SendMMsgFunction::Type(); }
 
-	static SendMMsgFunction::Type GetSendMMsg() {
-#ifdef _WIN32
-		return SendMMsgFunction::Type();
-#else
-		static SendMMsgFunction::Type sendMMsg = SendMMsgFunction::Load("sendmmsg");
-		return sendMMsg;
-#endif
-	}
+	// Send multiple data packets on the socket (result is number of messages sent)
+	MessageResult SendMultiple(MultiMessagePart parts[], ResultLength length) {
+		if (_sendMMsg)
+			return MessageResult(_sendMMsg(_handle, parts, length, SEND_FLAGS));
 
-public:
-	// Checks if the send multiple function is available
-	static bool HasSendMultiple() { return GetSendMMsg() != SendMMsgFunction::Type(); }
+		for (ResultLength i = 0; i < length; i++) {
+			MessageResult result = Send(parts[i]._message);
 
-	// Send data on the socket
-	MessageResult SendMultiple(MultiMessagePart parts[], size_t length) {
-		SendMMsgFunction::Type sendMMsg = GetSendMMsg();
+			if (result.Failed())
+				return MessageResult(i == 0 ? -1 : i, result.GetError());
 
-		if (sendMMsg)
-			return MessageResult(sendMMsg(_handle, parts, length, SEND_FLAGS));
+			parts[i]._result = result.GetResult();
+		}
 
-		return MessageResult::UnimplementedFunction();
+		return MessageResult(length, 0);
 	}
 
 	// Gets the number of hops value for outgoing multicast packets
@@ -1335,6 +1296,9 @@ inline IPSocket::TypeOfService operator&(IPSocket::TypeOfService x, IPSocket::Ty
 
 inline IPSocket::DSCP operator|(IPSocket::DSCP x, IPSocket::DSCP y) { return static_cast<IPSocket::DSCP>(static_cast<int>(x) | y); }
 inline IPSocket::DSCP operator&(IPSocket::DSCP x, IPSocket::DSCP y) { return static_cast<IPSocket::DSCP>(static_cast<int>(x) & y); }
+
+inline IPSocket::ReceiveFlags operator|(IPSocket::ReceiveFlags x, IPSocket::ReceiveFlags y) { return static_cast<IPSocket::ReceiveFlags>(static_cast<int>(x) | y); }
+inline IPSocket::ReceiveFlags operator&(IPSocket::ReceiveFlags x, IPSocket::ReceiveFlags y) { return static_cast<IPSocket::ReceiveFlags>(static_cast<int>(x) & y); }
 
 }
 

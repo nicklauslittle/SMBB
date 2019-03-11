@@ -43,14 +43,14 @@ SCENARIO ("Unordered", "[PacketMemory], [SharedMemory]") {
 	const char *testData[] = { "This is a ", "test.", "misordered data " };
 	IPSocket::Buffer buffers[] = { IPSocket::Buffer::Make(testData[0], strlen(testData[0])), IPSocket::Buffer::Make(testData[2], strlen(testData[2])), IPSocket::Buffer::Make(testData[1], strlen(testData[1]) + 1) };
 	IPSocket::Message message = IPSocket::Message::Make(buffers, sizeof(buffers) / sizeof(buffers[0]));
-	REQUIRE(sendSock.Send(message).GetBytes() > 0);
+	REQUIRE(sendSock.Send(message).GetResult() > 0);
 
 	IPSocket::PollItem pollItem = IPSocket::PollItem::Make(recvSock, IPSocket::POLL_CAN_READ);
 	IPSocket::Poll(&pollItem, 1, 1000);
 	REQUIRE(pollItem.HasResult(IPSocket::POLL_CAN_READ));
 
 	char buf[1024];
-	REQUIRE(recvSock.Receive(&buf, sizeof(buf)).GetBytes() > 0);
+	REQUIRE(recvSock.Receive(&buf, sizeof(buf)).GetResult() > 0);
 	std::cout << buf << std::endl;
 
 	/*

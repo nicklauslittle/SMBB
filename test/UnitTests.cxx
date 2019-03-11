@@ -255,14 +255,9 @@ SCENARIO ("IP Address Test", "[IPAddress]") {
 	IPSocket::Finish();
 }
 
-static bool TestTCP(const char *address, const char *port, IPAddressFamily family = FAMILY_UNSPECIFIED) {
+static void TestTCP(const char *address, const char *port, IPAddressFamily family = FAMILY_UNSPECIFIED) {
 	IPAddress ipAddress;
-	IPSocket::ResultLength found = IPAddress::Parse(&ipAddress, 1, address, port, true, family);
-
-	if (found <= 0) {
-		std::cerr << "Failed to find interfaces for " << address << ":" << port << std::endl;
-		return false;
-	}
+	REQUIRE(IPAddress::Parse(&ipAddress, 1, address, port, true, family) > 0);
 
 	// Setup the listening socket
 	IPSocketGuard listenSocket(ipAddress, TCP, IPSocket::OPEN_BIND_AND_LISTEN);
@@ -270,65 +265,34 @@ static bool TestTCP(const char *address, const char *port, IPAddressFamily famil
 	// Setup the peer
 	IPAddress peerAddress = IPAddress(ipAddress, listenSocket.GetAddress().GetPort());
 	IPSocketGuard peer;
-
-	if (!peer.SetImmediateSend()->SetNonblocking()->Open(peerAddress, TCP, IPSocket::OPEN_AND_CONNECT)) {
-		std::cerr << "Failed to connect, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
+	REQUIRE(peer.SetImmediateSend()->SetNonblocking()->Open(peerAddress, TCP, IPSocket::OPEN_AND_CONNECT));
 
 	// Accept the connection
 	IPAddress acceptedFrom;
 	IPSocketGuard accepted(listenSocket.Accept(&acceptedFrom));
-
-	if (!accepted.IsValid()) {
-		std::cerr << "Failed to accept, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
+	REQUIRE(accepted.IsValid());
 
 	std::cout << "Accepted connection from ";
 	DumpAddress(acceptedFrom);
 
-	if (peer.Connect(peerAddress) == IPSocket::CONNECT_FAILED) {
-		std::cerr << "Failed to connect, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
-
-	if (!accepted.SetImmediateSend() || !accepted.SetNonblocking()) {
-		std::cerr << "Failed to set immediate send or non-blocking, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
+	REQUIRE(peer.Connect(peerAddress) != IPSocket::CONNECT_FAILED);
+	REQUIRE((accepted.SetImmediateSend() && accepted.SetNonblocking()));
 
 	// Test sending data
 	const char DATA[] = "This is a test string that is sent through the socket and should match what is received.";
-
-	if (accepted.Send(DATA, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetBytes() != sizeof(DATA)) {
-		std::cerr << "Failed to write data, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
+	REQUIRE(accepted.Send(DATA, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetResult() == sizeof(DATA));
 
 	// Wait for data to arrive
 	IPSocket::SelectSets sets;
 	sets.AddSocket(peer, IPSocket::SELECT_CAN_READ);
 
-	if (sets.Wait(10000) <= 0) {
-		std::cerr << "Failed to read data (none available), error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
-
+	REQUIRE(sets.Wait(16000) > 0);
 	REQUIRE(sets.TestSocket(peer, IPSocket::SELECT_CHECK_ALL) == IPSocket::SELECT_CAN_READ);
 
 	// Receive data
 	char receivedData[sizeof(DATA)];
-
-	if (peer.Receive(receivedData, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetBytes() != sizeof(DATA)) {
-		std::cerr << "Failed to read data, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
-
-	if (memcmp(DATA, receivedData, sizeof(DATA)) != 0) {
-		std::cerr << "Read data does not match" << std::endl;
-		return false;
-	}
+	REQUIRE(peer.Receive(receivedData, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetResult() == sizeof(DATA));
+	REQUIRE(memcmp(DATA, receivedData, sizeof(DATA)) == 0);
 
 	// Test sending more data
 	IPSocket::Buffer splitData[] = { IPSocket::Buffer::Make(&DATA[0], 21), IPSocket::Buffer::Make(&DATA[29], 59) };
@@ -336,18 +300,12 @@ static bool TestTCP(const char *address, const char *port, IPAddressFamily famil
 	IPSocket::MultiMessagePart multipleSplitData = IPSocket::MultiMessagePart::Make(splitData, 2);
 	const size_t SPLIT_DATA_SIZE = 21 + 59;
 
-	if (accepted.Send(singleSplitData).GetBytes() != SPLIT_DATA_SIZE || (IPSocket::HasSendMultiple() && accepted.SendMultiple(&multipleSplitData, 1).GetBytes() != 1)) {
-		std::cerr << "Failed to write data, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
+	REQUIRE((accepted.Send(singleSplitData).GetResult() == SPLIT_DATA_SIZE && accepted.SendMultiple(&multipleSplitData, 1).GetResult() == 1));
 
 	// Wait for data to arrive
 	sets.AddSocket(peer, IPSocket::SELECT_CAN_READ);
 
-	if (sets.Wait(10000) <= 0) {
-		std::cerr << "Failed to read data (none available), error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
+	REQUIRE(sets.Wait(16000) > 0);
 
 	// Receive data
 	uint8_t recvDataBlocks[4][40];
@@ -355,32 +313,18 @@ static bool TestTCP(const char *address, const char *port, IPAddressFamily famil
 	IPSocket::Message recvSingle = IPSocket::Message::Make(recvSplitData, 2);
 	IPSocket::MultiMessagePart recvMultiple = IPSocket::MultiMessagePart::Make(&recvSplitData[2], 2);
 
-	if (peer.Receive(recvSingle).GetBytes() != 80 || IPSocket::HasReceiveMultiple() && (sets.Wait(10000) <= 0 || peer.ReceiveMultiple(&recvMultiple, 1).GetBytes() != 1)) {
-		std::cerr << "Failed to read data, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
-
-	if (memcmp(DATA, recvDataBlocks[0], 21) != 0 || memcmp(&DATA[29], &recvDataBlocks[0][21], 19) != 0 || memcmp(&DATA[48], recvDataBlocks[1], 40) != 0 ||
-			IPSocket::HasReceiveMultiple() && (memcmp(DATA, recvDataBlocks[2], 21) != 0 || memcmp(&DATA[29], &recvDataBlocks[2][21], 19) != 0 || memcmp(&DATA[48], recvDataBlocks[3], 40) != 0)) {
-		std::cerr << "Read data does not match" << std::endl;
-		return false;
-	}
+	REQUIRE((peer.Receive(recvSingle).GetResult() == 80 && sets.Wait(10000) > 0 && peer.ReceiveMultiple(&recvMultiple, 1).GetResult() == 1));
+	REQUIRE((memcmp(DATA, recvDataBlocks[0], 21) == 0 && memcmp(&DATA[29], &recvDataBlocks[0][21], 19) == 0 && memcmp(&DATA[48], recvDataBlocks[1], 40) == 0 &&
+		memcmp(DATA, recvDataBlocks[2], 21) == 0 && memcmp(&DATA[29], &recvDataBlocks[2][21], 19) == 0 && memcmp(&DATA[48], recvDataBlocks[3], 40) == 0));
 
 	std::cout << "Finished testing TCP for " << address << std::endl << std::endl;
 	accepted.CloseTCPSend();
 	peer.CloseTCPSend();
-
-	return true;
 }
 
 static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAddress, const char *sendAddress, IPAddressFamily family = FAMILY_UNSPECIFIED) {
 	IPAddress ipAddress;
-	IPSocket::ResultLength found = IPAddress::Parse(&ipAddress, 1, receiveAddress, NULL, true, family);
-
-	if (found <= 0) {
-		std::cerr << "Failed to find bindable interfaces for multicast" << std::endl;
-		return false;
-	}
+	REQUIRE(IPAddress::Parse(&ipAddress, 1, receiveAddress, NULL, true, family) > 0);
 
 	// Setup the read socket
 	IPSocketGuard readSocket(ipAddress, UDP, IPSocket::OPEN_AND_BIND);
@@ -389,21 +333,12 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	DumpAddress(readSocket.GetAddress());
 
 	IPAddress multicast;
-	found = IPAddress::Parse(&multicast, 1, multicastAddress, NULL, false, family);
-
-	if (found <= 0) {
-		std::cerr << "Failed to find interfaces for multicast address " << multicastAddress << std::endl;
-		return false;
-	}
-
+	REQUIRE(IPAddress::Parse(&multicast, 1, multicastAddress, NULL, false, family) > 0);
 	REQUIRE(multicast.IsMulticast());
 	std::cout << "Subscribing to ";
 	DumpAddress(multicast);
 
-	if (!readSocket.SetMulticastLoopback()->SubscribeToMulticastAddress(multicast)) {
-		std::cerr << "Failed to subscribe to multicast address " << multicastAddress << " (error: " << IPSocket::LastError() << ")" << std::endl;
-		return false;
-	}
+	REQUIRE(readSocket.SetMulticastLoopback()->SubscribeToMulticastAddress(multicast));
 
 	// Setup the sender
 	IPAddress sendToAddress = IPAddress(multicast, readSocket.GetAddress().GetPort());
@@ -412,20 +347,12 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	std::cout << "Sending to ";
 	DumpAddress(sendToAddress);
 
-	if (!sendSocket.Open(sendToAddress, UDP, IPSocket::OPEN_ONLY)) {
-		std::cerr << "Failed to open, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
+	REQUIRE(sendSocket.Open(sendToAddress, UDP, IPSocket::OPEN_ONLY));
 
 	(void)sendSocket.SetMulticastLoopback()->SetMulticastHops(3);
 
 	if (sendAddress) {
-		found = IPAddress::Parse(&ipAddress, 1, sendAddress, NULL, true, family);
-
-		if (found <= 0) {
-			std::cerr << "Failed to find local interface " << sendAddress << std::endl << std::endl;
-			return false;
-		}
+		REQUIRE(IPAddress::Parse(&ipAddress, 1, sendAddress, NULL, true, family) > 0);
 
 		if (sendSocket.SetMulticastSendInterface(ipAddress))
 			std::cout << "Using send address " << sendAddress << std::endl;
@@ -439,35 +366,52 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	size_t i = 0;
 
 	do {
-		if (sendSocket.Send(sendToAddress, DATA, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetBytes() != sizeof(DATA)) {
-			std::cerr << "Failed to write data, error " << IPSocket::LastError() << std::endl;
-			return false;
-		}
+		REQUIRE(sendSocket.Send(sendToAddress, DATA, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetResult() == sizeof(DATA));
 
 		// Wait for data to arrive
 		recvSets.AddSocket(readSocket, IPSocket::SELECT_CAN_READ);
 	} while (i++ < 10 && recvSets.Wait(1000) <= 0);
 
-	if (i >= 10) {
-		std::cerr << "Failed to read data (none available), error " << IPSocket::LastError() << std::endl;
+	// If this fails, we may not be able to receive loopback multicast messages on this address.
+	if (i >= 10)
 		return false;
-	}
 
 	// Receive data
 	char receivedData[sizeof(DATA)];
 
-	if (readSocket.Receive(receivedData, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetBytes() != sizeof(DATA)) {
-		std::cerr << "Failed to read data, error " << IPSocket::LastError() << std::endl;
-		return false;
-	}
+	REQUIRE(readSocket.Receive(receivedData, static_cast<IPSocket::DataLength>(sizeof(receivedData))).GetResult() == sizeof(receivedData));
+	REQUIRE(memcmp(DATA, receivedData, sizeof(DATA)) == 0);
 
-	if (memcmp(DATA, receivedData, sizeof(DATA)) != 0) {
-		std::cerr << "Read data does not match" << std::endl;
-		return false;
-	}
+	// Test sending too much data
+	const char TOO_MUCH_DATA[33000] = { };
+	IPSocket::Buffer tooMuchDataBuffers[2] = { IPSocket::Buffer::Make(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)), IPSocket::Buffer::Make(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)) };
+	IPSocket::MessageResult tooMuchDataError = sendSocket.Send(IPSocket::Message::Make(tooMuchDataBuffers, 2, &sendToAddress));
+
+	REQUIRE(tooMuchDataError.GetError() == IP_SOCKET_ERROR(MSGSIZE));
+
+	i = 0;
+
+	do {
+		REQUIRE(sendSocket.Send(sendToAddress, DATA, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetResult() == sizeof(DATA));
+
+		// Wait for data to arrive
+		recvSets.AddSocket(readSocket, IPSocket::SELECT_CAN_READ);
+	} while (i++ < 10 && recvSets.Wait(16000) <= 0);
+
+	REQUIRE(i < 10);
+
+	// Receive data
+	IPAddress receiveFromAddress;
+	IPSocket::Buffer msgSizeErrorBuffer = IPSocket::Buffer::Make(receivedData, sizeof(receivedData) - 1);
+	IPSocket::MessageResult msgSizeError = readSocket.Receive(IPSocket::Message::Make(&msgSizeErrorBuffer, 1, &receiveFromAddress));
+
+	REQUIRE(msgSizeError.GetResult() == sizeof(receivedData) - 1);
+	REQUIRE(msgSizeError.HasSizeError());
+	REQUIRE(sendSocket.GetAddress().GetPort() == receiveFromAddress.GetPort());
+
+	REQUIRE(memcmp(DATA, receivedData, sizeof(receivedData) - 1) == 0);
 
 	std::cout << "Finished testing multicast for " << multicastAddress << std::endl << std::endl;
-
 	return true;
 }
 
@@ -541,16 +485,19 @@ SCENARIO ("IP Socket Test", "[IPSocket]") {
 
 	GIVEN ("A set of IP addresses and ports") {
 		WHEN ("Testing TCP connections using the addresses and ports") {
-			THEN ("The TCP test suceeds") {
+			THEN ("The TCP test succeeds") {
+				std::cout << "Has multiple receive: " << IPSocket::HasNativeReceiveMultiple() << std::endl;
+				std::cout << "Has multiple send: " << IPSocket::HasNativeSendMultiple() << std::endl << std::endl;
+
 				// Test TCP
-				REQUIRE(TestTCP("127.0.0.1", NULL));
-				REQUIRE(TestTCP("::1", NULL, IPV6));
-				REQUIRE(TestTCP("127.0.0.1", NULL, IPV4));
+				TestTCP("127.0.0.1", NULL);
+				TestTCP("::1", NULL, IPV6);
+				TestTCP("127.0.0.1", NULL, IPV4);
 			}
 		}
 
 		WHEN ("Testing multicast UDP connections using the addresses and ports") {
-			THEN ("The multicast UDP test suceeds") {
+			THEN ("The multicast UDP test succeeds") {
 				// Test Multicast
 				REQUIRE(TestMulticastUDP(NULL, "239.192.2.3", NULL, IPV4));
 				REQUIRE(TestMulticastUDP(NULL, "ff08::0001", NULL, IPV6));
@@ -591,6 +538,8 @@ SCENARIO ("Select Test", "[IPSocket]") {
 		WHEN ("Connecting to a socket") {
 			IPSocket::SelectSets sets;
 
+			REQUIRE(sets.Wait(10000) == 0);
+
 			IPSocketGuard localIPv4Socket(ipv4Loopback, TCP, IPSocket::OPEN_AND_BIND);
 			IPSocketGuard localIPv6Socket(ipv6Loopback, TCP, IPSocket::OPEN_AND_BIND);
 
@@ -599,8 +548,6 @@ SCENARIO ("Select Test", "[IPSocket]") {
 
 			AND_WHEN ("The socket is not listening") {
 				THEN ("Waiting on the select sets identify the connection as failed") {
-					std::cout << "Prefer select: " << IPSocket::SelectSets::ShouldPreferSelectOverPoll(10) << std::endl << std::endl;
-
 					REQUIRE(sets.Wait(100000) == 0);
 
 					REQUIRE(connectToIPv4.SetNonblocking()->Connect(localIPv4Socket.GetAddress()) != IPSocket::CONNECT_SUCCESS);
@@ -719,6 +666,8 @@ SCENARIO ("Poll Test", "[IPSocket]") {
 
 		WHEN ("Connecting to a socket") {
 			IPSocket::PollItem pollSet[4];
+
+			REQUIRE(IPSocket::Poll(pollSet, 0, 10) == 0);
 
 			IPSocketGuard localIPv4Socket(ipv4Loopback, TCP, IPSocket::OPEN_AND_BIND);
 			IPSocketGuard localIPv6Socket(ipv6Loopback, TCP, IPSocket::OPEN_AND_BIND);
