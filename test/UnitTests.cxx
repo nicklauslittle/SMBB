@@ -27,80 +27,31 @@ SOFTWARE.
 #include <iostream>
 #include <string>
 
-#include "smbb/DataView.h"
+#include "smbb/SharedMemorySection.h"
 
 using namespace smbb;
 
-SCENARIO ("Data View Utilities Test", "[DataView], [Utilities]") {
-	GIVEN ("A buffer of bytes") {
-		DataView::Byte buffer[64] = { 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F };
-
-		WHEN ("A data view wraps the buffer") {
-			THEN ("The 64-bit value retrieved from the buffer matches the expected value") {
-				int64_t valueStored = (int64_t(0xFEDCBA98) << 32) | 0x76543210;
-				REQUIRE(DataView::Get<int64_t>(buffer) == valueStored);
-			}
-
-			THEN ("The double value retrieved from the buffer matches the expected value") {
-				REQUIRE(DataView::Get<double>(buffer + 8) == 1.0);
-			}
-		}
-
-		WHEN ("A 64-bit value is put into the buffer using a data view") {
-			int64_t valueStored = (int64_t(0xFEDCBA98) << 32) | 0x76543210;
-			DataView::Set<int64_t>(buffer + 8, valueStored);
-
-			THEN ("The values retrieved from the buffer match the expected values") {
-				REQUIRE(DataView::Get<int64_t>(buffer + 8) == valueStored);
-
-				REQUIRE(DataView::Get<int32_t>(buffer + 8) == int32_t(valueStored));
-				REQUIRE(DataView::Get<int32_t>(buffer + 12) == int32_t(valueStored >> 32));
-
-				REQUIRE(DataView::Get<int16_t>(buffer + 8) == int16_t(valueStored));
-				REQUIRE(DataView::Get<int16_t>(buffer + 14) == int16_t(valueStored >> 48));
-
-				REQUIRE(DataView::Get<int8_t>(buffer + 8) == int8_t(valueStored));
-				REQUIRE(DataView::Get<int8_t>(buffer + 15) == int8_t(valueStored >> 56));
-			}
-		}
-
-		WHEN ("Boolean values are modified in the buffer using a data view") {
-			REQUIRE(!DataView::GetBool<0>(buffer));
-			REQUIRE(DataView::GetBool<4>(buffer));
-			REQUIRE(!DataView::GetBool<0>(buffer + 1));
-			REQUIRE(DataView::GetBool<1>(buffer + 1));
-
-			DataView::SetBool<0>(buffer, true);
-			DataView::SetBool<4>(buffer, false);
-			DataView::SetTrue<0>(buffer + 1);
-			DataView::SetFalse<1>(buffer + 1);
-
-			THEN ("The boolean values retrieved from the buffer match the expected values") {
-				REQUIRE(DataView::GetBool<0>(buffer));
-				REQUIRE(!DataView::GetBool<4>(buffer));
-				REQUIRE(DataView::GetBool<0>(buffer + 1));
-				REQUIRE(!DataView::GetBool<1>(buffer + 1));
-			}
-		}
-	}
-}
-
-#include "smbb/SharedMemorySection.h"
-
 SCENARIO ("Shared Memory Utilities Test", "[SharedMemory], [Utilities]") {
 	GIVEN ("Some file-backed shared memory") {
-		SharedMemory testFile;
+		SharedMemory testFile, testFileAutoDelete;
+		char testFilePath[1024];
 
-		REQUIRE(testFile.CreateFileBacked("Test 1", SharedMemorySection::GetOffsetSize() + 4096, true) == SharedMemory::LOAD_SUCCESS);
+		REQUIRE(SharedMemory::GetRecommendedDirectory(testFilePath, 1024));
+		std::string testFileName = std::string(testFilePath) + "/SMBB-Test 1";
 
-		SharedMemorySection section1(testFile, SharedMemorySection::GetOffsetSize() + 4096);
+		SharedMemory::DeleteFileBacked(testFileName.c_str());
 
-		REQUIRE(!section1.ReadOnly());
+		REQUIRE(testFile.CreateFileBacked(testFileName.c_str(), SharedMemorySection::GetOffsetSize() + 4096, false) == SharedMemory::LOAD_SUCCESS);
+		REQUIRE(testFileAutoDelete.CreateFileBacked((testFileName + "-autodelete").c_str(), SharedMemorySection::GetOffsetSize() + 4096, true) == SharedMemory::LOAD_SUCCESS);
 
 		WHEN ("The shared memory is opened and the data modified") {
+			std::cout << "Temporary Directory: " << testFilePath << std::endl << std::endl;
+
+			SharedMemorySection section1(testFile, SharedMemorySection::GetOffsetSize() + 4096);
 			SharedMemory testFile2;
 
-			REQUIRE(testFile2.OpenFileBacked("Test 1") == SharedMemory::LOAD_SUCCESS);
+			REQUIRE(!section1.ReadOnly());
+			REQUIRE(testFile2.OpenFileBacked(testFileName.c_str()) == SharedMemory::LOAD_SUCCESS);
 
 			THEN ("The memory in the created shared memory section matches the memory in the opened shared memory section") {
 				SharedMemorySection section2(testFile2, 4096, SharedMemorySection::GetOffsetSize());
@@ -132,20 +83,22 @@ SCENARIO ("Shared Memory Utilities Test", "[SharedMemory], [Utilities]") {
 				REQUIRE(!section2.Valid());
 			}
 		}
+
+		testFile.Close();
+		REQUIRE(SharedMemory::DeleteFileBacked(testFileName.c_str()));
 	}
 
 	GIVEN ("Some named shared memory") {
-		SharedMemory testFile;
+		SharedMemory testFile, testFileAutoDelete;
 
-		REQUIRE(testFile.CreateNamed("Test 1", SharedMemorySection::GetOffsetSize() + 4096, true) == SharedMemory::LOAD_SUCCESS);
-
-		SharedMemorySection section1(testFile, SharedMemorySection::GetOffsetSize() + 4096);
-
-		REQUIRE(!section1.ReadOnly());
+		REQUIRE(testFile.CreateNamed("Test 1", SharedMemorySection::GetOffsetSize() + 4096, false) == SharedMemory::LOAD_SUCCESS);
+		REQUIRE(testFileAutoDelete.CreateNamed("Test 1-autodelete", SharedMemorySection::GetOffsetSize() + 4096, true) == SharedMemory::LOAD_SUCCESS);
 
 		WHEN ("The shared memory is opened and the data modified") {
+			SharedMemorySection section1(testFile, SharedMemorySection::GetOffsetSize() + 4096);
 			SharedMemory testFile2;
 
+			REQUIRE(!section1.ReadOnly());
 			REQUIRE(testFile2.OpenNamed("Test 1") == SharedMemory::LOAD_SUCCESS);
 
 			THEN ("The memory in the created shared memory section matches the memory in the opened shared memory section") {
@@ -169,6 +122,9 @@ SCENARIO ("Shared Memory Utilities Test", "[SharedMemory], [Utilities]") {
 				REQUIRE(std::string((const char *)section2.Data()) == "Test String 2");
 			}
 		}
+
+		testFile.Close();
+		REQUIRE(SharedMemory::DeleteNamed("Test 1"));
 	}
 
 	GIVEN ("Bad attempts to create or open shared memory") {
@@ -186,27 +142,6 @@ SCENARIO ("Shared Memory Utilities Test", "[SharedMemory], [Utilities]") {
 			}
 		}
 	}
-}
-
-#include "smbb/Time.h"
-
-SCENARIO ("Time Test", "[Time], [Utilities]") {
-	Time start = GetMonotonicTime();
-	Time currentTime = GetUTCNs();
-	Time elapsed = GetMonotonicTime() - start;
-
-	REQUIRE(start != 0);
-	REQUIRE(currentTime != 0);
-
-	Time seconds = currentTime / 1000000000;
-	Time day = seconds / 86400;
-	seconds = seconds % 86400;
-	Time hour = seconds / 3600;
-	seconds = seconds % 3600;
-	Time min = seconds / 60;
-	seconds = seconds % 60;
-
-	std::cout << "Got the current time (" << day << " " << hour << ":" << min << ":" << seconds << ") in " << (double(elapsed) / GetMonotonicFrequency()) << "s" << std::endl << std::endl;
 }
 
 #include "smbb/IPAddress.h"
@@ -229,6 +164,10 @@ static void DumpAddresses(const char *address, const char *port, bool bindable, 
 
 #include "smbb/IPSocket.h"
 
+#ifdef SMBB_NO_IPV6
+#define IPV6 IPV4
+#endif
+
 SCENARIO ("IP Address Test", "[IPAddress]") {
 	REQUIRE(IPSocket::Initialize()); // IPAddress tests still require initializing sockets
 
@@ -248,6 +187,19 @@ SCENARIO ("IP Address Test", "[IPAddress]") {
 				DumpAddresses("ip6-localhost", "1234", true);
 				DumpAddresses("localhost", NULL, false, IPV4);
 				DumpAddresses("localhost", NULL, true, IPV4);
+
+				IPAddress empty;
+				IPAddress::String uri;
+
+				REQUIRE(empty.GetFamily() == FAMILY_UNSPECIFIED);
+				REQUIRE(empty.GetInterfaceIndex() == 0);
+				REQUIRE(empty.GetLength() == 0);
+				REQUIRE(empty.GetPort() == 0);
+				REQUIRE(!empty.IsAny());
+				REQUIRE(!empty.IsLoopback());
+				REQUIRE(!empty.IsMulticast());
+				REQUIRE(!empty.IsValid());
+				REQUIRE(!empty.ToURI(uri));
 			}
 		}
 	}
@@ -260,16 +212,17 @@ static void TestTCP(const char *address, const char *port, IPAddressFamily famil
 	REQUIRE(IPAddress::Parse(&ipAddress, 1, address, port, true, family) > 0);
 
 	// Setup the listening socket
-	IPSocketGuard listenSocket(ipAddress, TCP, IPSocket::OPEN_BIND_AND_LISTEN);
+	AutoCloseIPSocket listenSocket(ipAddress, TCP, IPSocket::OPEN_BIND_AND_LISTEN);
 
 	// Setup the peer
 	IPAddress peerAddress = IPAddress(ipAddress, listenSocket.GetAddress().GetPort());
-	IPSocketGuard peer;
+	AutoCloseIPSocket peer;
 	REQUIRE(peer.SetImmediateSend()->SetNonblocking()->Open(peerAddress, TCP, IPSocket::OPEN_AND_CONNECT));
+	REQUIRE(!peer.Open(peerAddress, UDP, IPSocket::OPEN_AND_CONNECT));
 
 	// Accept the connection
 	IPAddress acceptedFrom;
-	IPSocketGuard accepted(listenSocket.Accept(&acceptedFrom));
+	AutoCloseIPSocket accepted(listenSocket.Accept(&acceptedFrom));
 	REQUIRE(accepted.IsValid());
 
 	std::cout << "Accepted connection from ";
@@ -294,10 +247,11 @@ static void TestTCP(const char *address, const char *port, IPAddressFamily famil
 	REQUIRE(peer.Receive(receivedData, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetResult() == sizeof(DATA));
 	REQUIRE(memcmp(DATA, receivedData, sizeof(DATA)) == 0);
 
+#ifndef SMBB_NO_SOCKET_MSG
 	// Test sending more data
-	IPSocket::Buffer splitData[] = { IPSocket::Buffer::Make(&DATA[0], 21), IPSocket::Buffer::Make(&DATA[29], 59) };
-	IPSocket::Message singleSplitData = IPSocket::Message::Make(splitData, 2);
-	IPSocket::MultiMessagePart multipleSplitData = IPSocket::MultiMessagePart::Make(splitData, 2);
+	IPSocket::Buffer splitData[] = { IPSocket::Buffer(&DATA[0], 21), IPSocket::Buffer(&DATA[29], 59) };
+	IPSocket::Message singleSplitData = IPSocket::Message(splitData, 2);
+	IPSocket::MultiMessagePart multipleSplitData = IPSocket::MultiMessagePart(splitData, 2);
 	const size_t SPLIT_DATA_SIZE = 21 + 59;
 
 	REQUIRE((accepted.Send(singleSplitData).GetResult() == SPLIT_DATA_SIZE && accepted.SendMultiple(&multipleSplitData, 1).GetResult() == 1));
@@ -309,14 +263,14 @@ static void TestTCP(const char *address, const char *port, IPAddressFamily famil
 
 	// Receive data
 	uint8_t recvDataBlocks[4][40];
-	IPSocket::Buffer recvSplitData[] = { IPSocket::Buffer::Make(recvDataBlocks[0], 40), IPSocket::Buffer::Make(recvDataBlocks[1], 40), IPSocket::Buffer::Make(recvDataBlocks[2], 40), IPSocket::Buffer::Make(recvDataBlocks[3], 40) };
-	IPSocket::Message recvSingle = IPSocket::Message::Make(recvSplitData, 2);
-	IPSocket::MultiMessagePart recvMultiple = IPSocket::MultiMessagePart::Make(&recvSplitData[2], 2);
+	IPSocket::Buffer recvSplitData[] = { IPSocket::Buffer(recvDataBlocks[0], 40), IPSocket::Buffer(recvDataBlocks[1], 40), IPSocket::Buffer(recvDataBlocks[2], 40), IPSocket::Buffer(recvDataBlocks[3], 40) };
+	IPSocket::Message recvSingle = IPSocket::Message(recvSplitData, 2);
+	IPSocket::MultiMessagePart recvMultiple = IPSocket::MultiMessagePart(&recvSplitData[2], 2);
 
 	REQUIRE((peer.Receive(recvSingle).GetResult() == 80 && sets.Wait(10000) > 0 && peer.ReceiveMultiple(&recvMultiple, 1).GetResult() == 1));
 	REQUIRE((memcmp(DATA, recvDataBlocks[0], 21) == 0 && memcmp(&DATA[29], &recvDataBlocks[0][21], 19) == 0 && memcmp(&DATA[48], recvDataBlocks[1], 40) == 0 &&
 		memcmp(DATA, recvDataBlocks[2], 21) == 0 && memcmp(&DATA[29], &recvDataBlocks[2][21], 19) == 0 && memcmp(&DATA[48], recvDataBlocks[3], 40) == 0));
-
+#endif
 	std::cout << "Finished testing TCP for " << address << std::endl << std::endl;
 	accepted.CloseTCPSend();
 	peer.CloseTCPSend();
@@ -327,7 +281,7 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	REQUIRE(IPAddress::Parse(&ipAddress, 1, receiveAddress, NULL, true, family) > 0);
 
 	// Setup the read socket
-	IPSocketGuard readSocket(ipAddress, UDP, IPSocket::OPEN_AND_BIND);
+	AutoCloseIPSocket readSocket(ipAddress, UDP, IPSocket::OPEN_AND_BIND);
 
 	std::cout << "Reading on ";
 	DumpAddress(readSocket.GetAddress());
@@ -342,7 +296,7 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 
 	// Setup the sender
 	IPAddress sendToAddress = IPAddress(multicast, readSocket.GetAddress().GetPort());
-	IPSocketGuard sendSocket;
+	AutoCloseIPSocket sendSocket;
 
 	std::cout << "Sending to ";
 	DumpAddress(sendToAddress);
@@ -352,7 +306,10 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	(void)sendSocket.SetMulticastLoopback()->SetMulticastHops(3);
 
 	if (sendAddress) {
-		REQUIRE(IPAddress::Parse(&ipAddress, 1, sendAddress, NULL, true, family) > 0);
+		if (IPAddress::Parse(&ipAddress, 1, sendAddress, NULL, true, family) <= 0) {
+			std::cerr << "Failed to parse local address " << sendAddress << std::endl << std::endl;
+			return false;
+		}
 
 		if (sendSocket.SetMulticastSendInterface(ipAddress))
 			std::cout << "Using send address " << sendAddress << std::endl;
@@ -365,12 +322,12 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	IPSocket::SelectSets recvSets;
 	size_t i = 0;
 
-	do {
-		REQUIRE(sendSocket.Send(sendToAddress, DATA, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetResult() == sizeof(DATA));
+	for (i = 0; i < 10 && recvSets.Wait(16000) <= 0; i++) {
+		REQUIRE(sendSocket.Send(DATA, static_cast<IPSocket::DataLength>(sizeof(DATA)), sendToAddress).GetResult() == sizeof(DATA));
 
 		// Wait for data to arrive
 		recvSets.AddSocket(readSocket, IPSocket::SELECT_CAN_READ);
-	} while (i++ < 10 && recvSets.Wait(1000) <= 0);
+	}
 
 	// If this fails, we may not be able to receive loopback multicast messages on this address.
 	if (i >= 10)
@@ -382,35 +339,34 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	REQUIRE(readSocket.Receive(receivedData, static_cast<IPSocket::DataLength>(sizeof(receivedData))).GetResult() == sizeof(receivedData));
 	REQUIRE(memcmp(DATA, receivedData, sizeof(DATA)) == 0);
 
+#ifndef SMBB_NO_SOCKET_MSG
 	// Test sending too much data
 	const char TOO_MUCH_DATA[33000] = { };
-	IPSocket::Buffer tooMuchDataBuffers[2] = { IPSocket::Buffer::Make(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)), IPSocket::Buffer::Make(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)) };
-	IPSocket::MessageResult tooMuchDataError = sendSocket.Send(IPSocket::Message::Make(tooMuchDataBuffers, 2, &sendToAddress));
+	IPSocket::Buffer tooMuchDataBuffers[2] = { IPSocket::Buffer(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)), IPSocket::Buffer(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)) };
+	IPSocket::MessageResult tooMuchDataError = sendSocket.Send(IPSocket::Message(tooMuchDataBuffers, 2, &sendToAddress));
 
 	REQUIRE(tooMuchDataError.GetError() == IP_SOCKET_ERROR(MSGSIZE));
 
-	i = 0;
-
-	do {
-		REQUIRE(sendSocket.Send(sendToAddress, DATA, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetResult() == sizeof(DATA));
+	for (i = 0; i < 10 && recvSets.Wait(16000) <= 0; i++) {
+		REQUIRE(sendSocket.Send(DATA, static_cast<IPSocket::DataLength>(sizeof(DATA)), sendToAddress).GetResult() == sizeof(DATA));
 
 		// Wait for data to arrive
 		recvSets.AddSocket(readSocket, IPSocket::SELECT_CAN_READ);
-	} while (i++ < 10 && recvSets.Wait(16000) <= 0);
+	}
 
 	REQUIRE(i < 10);
 
 	// Receive data
 	IPAddress receiveFromAddress;
-	IPSocket::Buffer msgSizeErrorBuffer = IPSocket::Buffer::Make(receivedData, sizeof(receivedData) - 1);
-	IPSocket::MessageResult msgSizeError = readSocket.Receive(IPSocket::Message::Make(&msgSizeErrorBuffer, 1, &receiveFromAddress));
+	IPSocket::Buffer msgSizeErrorBuffer = IPSocket::Buffer(receivedData, sizeof(receivedData) - 1);
+	IPSocket::MessageResult msgSizeError = readSocket.Receive(IPSocket::Message(&msgSizeErrorBuffer, 1, &receiveFromAddress));
 
 	REQUIRE(msgSizeError.GetResult() == sizeof(receivedData) - 1);
 	REQUIRE(msgSizeError.HasSizeError());
 	REQUIRE(sendSocket.GetAddress().GetPort() == receiveFromAddress.GetPort());
 
 	REQUIRE(memcmp(DATA, receivedData, sizeof(receivedData) - 1) == 0);
-
+#endif
 	std::cout << "Finished testing multicast for " << multicastAddress << std::endl << std::endl;
 	return true;
 }
@@ -418,7 +374,7 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 static bool TestSocketOptions(IPAddressFamily family, IPProtocol protocol) {
 	IPAddress ipAddress = IPAddress::Loopback(family);
 	IPAddress::String uri;
-	IPSocketGuard listener(ipAddress, protocol, IPSocket::OPEN_AND_BIND);
+	AutoCloseIPSocket listener(ipAddress, protocol, IPSocket::OPEN_AND_BIND);
 
 	if (protocol == TCP) {
 		REQUIRE(listener.Listen(1));
@@ -428,14 +384,14 @@ static bool TestSocketOptions(IPAddressFamily family, IPProtocol protocol) {
 		std::cout << "Testing " << listener.GetAddress().ToURI(uri, true) << " (UDP)" << std::endl;
 
 	// Prepare the socket
-	IPSocketGuard socket(family, protocol);
-	IPSocketGuard accepted;
+	AutoCloseIPSocket socket(family, protocol);
+	AutoCloseIPSocket accepted;
 
 	REQUIRE(socket.SetNonblocking());
 	REQUIRE(socket.Connect(listener.GetAddress()) != IPSocket::CONNECT_FAILED);
 
 	if (protocol == TCP) {
-		IPSocketGuard temp(listener.Accept());
+		AutoCloseIPSocket temp(listener.Accept());
 		accepted.Swap(temp);
 
 		IPSocket::SelectSets sets;
@@ -472,11 +428,11 @@ static bool TestSocketOptions(IPAddressFamily family, IPProtocol protocol) {
 SCENARIO ("IP Socket Test", "[IPSocket]") {
 	REQUIRE(IPSocket::Initialize());
 
-	REQUIRE(std::is_pod<IPSocket::Buffer>::value);
-	REQUIRE(std::is_pod<IPSocket::Message>::value);
-	REQUIRE(std::is_pod<IPSocket::MultiMessagePart>::value);
-	REQUIRE(std::is_pod<IPSocket::PollItem>::value);
-
+#ifndef SMBB_NO_SOCKET_MSG
+	REQUIRE(std::is_standard_layout<IPSocket::Buffer>::value);
+	REQUIRE(std::is_standard_layout<IPSocket::Message>::value);
+	REQUIRE(std::is_standard_layout<IPSocket::MultiMessagePart>::value);
+#endif
 	IPAddress ipAddress;
 	REQUIRE(IPAddress::Parse(&ipAddress, 1, "127.0.0.1", "http", true, IPV4) >= 0);
 	REQUIRE(IPAddress::Parse(&ipAddress, 1, "127.0.0.1", "ftp", true, IPV4) >= 0);
@@ -486,13 +442,16 @@ SCENARIO ("IP Socket Test", "[IPSocket]") {
 	GIVEN ("A set of IP addresses and ports") {
 		WHEN ("Testing TCP connections using the addresses and ports") {
 			THEN ("The TCP test succeeds") {
+#ifndef SMBB_NO_SOCKET_MSG
 				std::cout << "Has multiple receive: " << IPSocket::HasNativeReceiveMultiple() << std::endl;
 				std::cout << "Has multiple send: " << IPSocket::HasNativeSendMultiple() << std::endl << std::endl;
-
+#endif
 				// Test TCP
 				TestTCP("127.0.0.1", NULL);
-				TestTCP("::1", NULL, IPV6);
 				TestTCP("127.0.0.1", NULL, IPV4);
+#ifndef SMBB_NO_IPV6
+				TestTCP("::1", NULL, IPV6);
+#endif
 			}
 		}
 
@@ -500,6 +459,7 @@ SCENARIO ("IP Socket Test", "[IPSocket]") {
 			THEN ("The multicast UDP test succeeds") {
 				// Test Multicast
 				REQUIRE(TestMulticastUDP(NULL, "239.192.2.3", NULL, IPV4));
+#ifndef SMBB_NO_IPV6
 				REQUIRE(TestMulticastUDP(NULL, "ff08::0001", NULL, IPV6));
 
 				IPAddress ipAddresses[8];
@@ -508,16 +468,19 @@ SCENARIO ("IP Socket Test", "[IPSocket]") {
 
 				for (IPSocket::ResultLength i = 0; i < found; i++)
 					TestMulticastUDP(NULL, "ff08::0001", ipAddresses[i].ToURI(ipString), IPV6);
+#endif
 			}
 		}
 
 		WHEN ("Testing socket options using the live addresses and ports") {
 			THEN ("The socket options are displayed") {
 				// Test Options
-				REQUIRE(TestSocketOptions(IPV6, TCP));
 				REQUIRE(TestSocketOptions(IPV4, TCP));
-				REQUIRE(TestSocketOptions(IPV6, UDP));
 				REQUIRE(TestSocketOptions(IPV4, UDP));
+#ifndef SMBB_NO_IPV6
+				REQUIRE(TestSocketOptions(IPV6, TCP));
+				REQUIRE(TestSocketOptions(IPV6, UDP));
+#endif
 			}
 		}
 	}
@@ -540,11 +503,11 @@ SCENARIO ("Select Test", "[IPSocket]") {
 
 			REQUIRE(sets.Wait(10000) == 0);
 
-			IPSocketGuard localIPv4Socket(ipv4Loopback, TCP, IPSocket::OPEN_AND_BIND);
-			IPSocketGuard localIPv6Socket(ipv6Loopback, TCP, IPSocket::OPEN_AND_BIND);
+			AutoCloseIPSocket localIPv4Socket(ipv4Loopback, TCP, IPSocket::OPEN_AND_BIND);
+			AutoCloseIPSocket localIPv6Socket(ipv6Loopback, TCP, IPSocket::OPEN_AND_BIND);
 
-			IPSocketGuard connectToIPv4(IPV4, TCP);
-			IPSocketGuard connectToIPv6(IPV6, TCP);
+			AutoCloseIPSocket connectToIPv4(IPV4, TCP);
+			AutoCloseIPSocket connectToIPv6(IPV6, TCP);
 
 			AND_WHEN ("The socket is not listening") {
 				THEN ("Waiting on the select sets identify the connection as failed") {
@@ -584,8 +547,8 @@ SCENARIO ("Select Test", "[IPSocket]") {
 					REQUIRE(sets.TestSocket(localIPv6Socket, IPSocket::SELECT_CHECK_ALL) == IPSocket::SELECT_CAN_ACCEPT);
 					sets.RemoveSocket(localIPv6Socket, IPSocket::SELECT_CAN_ACCEPT);
 
-					IPSocketGuard acceptedIPv4(localIPv4Socket.Accept());
-					IPSocketGuard acceptedIPv6(localIPv6Socket.Accept());
+					AutoCloseIPSocket acceptedIPv4(localIPv4Socket.Accept());
+					AutoCloseIPSocket acceptedIPv6(localIPv6Socket.Accept());
 
 					// Check that the connection is successful and that the accepted socket can write
 					sets.AddSocket(connectToIPv4, IPSocket::SELECT_IS_CONNECTED | IPSocket::SELECT_CONNECT_FAILED);
@@ -654,8 +617,10 @@ SCENARIO ("Select Test", "[IPSocket]") {
 	IPSocket::Finish();
 }
 
+#ifndef SMBB_NO_POLL
 SCENARIO ("Poll Test", "[IPSocket]") {
 	REQUIRE(IPSocket::Initialize());
+	REQUIRE(std::is_standard_layout<IPSocket::PollItem>::value);
 
 	GIVEN ("A loopback address") {
 		IPAddress ipv4Loopback = IPAddress::Loopback(IPV4);
@@ -669,11 +634,11 @@ SCENARIO ("Poll Test", "[IPSocket]") {
 
 			REQUIRE(IPSocket::Poll(pollSet, 0, 10) == 0);
 
-			IPSocketGuard localIPv4Socket(ipv4Loopback, TCP, IPSocket::OPEN_AND_BIND);
-			IPSocketGuard localIPv6Socket(ipv6Loopback, TCP, IPSocket::OPEN_AND_BIND);
+			AutoCloseIPSocket localIPv4Socket(ipv4Loopback, TCP, IPSocket::OPEN_AND_BIND);
+			AutoCloseIPSocket localIPv6Socket(ipv6Loopback, TCP, IPSocket::OPEN_AND_BIND);
 
-			IPSocketGuard connectToIPv4(IPV4, TCP);
-			IPSocketGuard connectToIPv6(IPV6, TCP);
+			AutoCloseIPSocket connectToIPv4(IPV4, TCP);
+			AutoCloseIPSocket connectToIPv6(IPV6, TCP);
 
 			AND_WHEN ("The socket is not listening") {
 				THEN ("Polling identifies the connection as failed") {
@@ -718,8 +683,8 @@ SCENARIO ("Poll Test", "[IPSocket]") {
 					REQUIRE((pollSet[0].GetResult() & IPSocket::POLL_ERROR) == 0);
 					REQUIRE(pollSet[0].HasResult(IPSocket::POLL_IS_CONNECTED));
 
-					IPSocketGuard acceptedIPv4(localIPv4Socket.Accept());
-					IPSocketGuard acceptedIPv6(localIPv6Socket.Accept());
+					AutoCloseIPSocket acceptedIPv4(localIPv4Socket.Accept());
+					AutoCloseIPSocket acceptedIPv6(localIPv6Socket.Accept());
 
 					// Check that the connection is successful and that both sides can write
 					pollSet[0] = IPSocket::PollItem::Make(connectToIPv4, IPSocket::POLL_CAN_READ | IPSocket::POLL_CAN_WRITE);
@@ -792,3 +757,4 @@ SCENARIO ("Poll Test", "[IPSocket]") {
 
 	IPSocket::Finish();
 }
+#endif

@@ -18,28 +18,13 @@
     <ClInclude Include="src\smbb\IPSocket.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\smbb\PacketMemory.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="src\smbb\utilities\Atomic.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="src\smbb\utilities\IntegerTypes.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="src\smbb\DataView.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\smbb\SharedMemory.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\smbb\SharedMemorySection.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="src\smbb\Time.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="src\smbb\DataBlocks.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\smbb\IPAddress.h">
@@ -57,6 +42,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\smbb\IPSocket.cxx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\smbb\SharedMemory.cxx">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

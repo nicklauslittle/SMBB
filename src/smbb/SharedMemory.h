@@ -27,16 +27,10 @@ SOFTWARE.
 #include <cstdlib>
 
 #ifdef _WIN32
-#include <sys/types.h>
 #include <windows.h>
 #else
-#include <cstring>
-
-#include <fcntl.h>
+#include <sys/types.h>
 #include <unistd.h>
-#ifdef _SC_SHARED_MEMORY_OBJECTS
-#include <sys/mman.h>
-#endif
 #endif
 
 #ifndef MAX_SHARED_MEMORY_FILENAME_SIZE
@@ -72,168 +66,35 @@ private:
 
 	Handle _handle;
 	Handle _mapHandle;
-#elif defined(_SC_SHARED_MEMORY_OBJECTS)
-	static bool CopyFilename(char *newFilename, const char *filename) {
-		size_t len = strlen(filename);
-
-		if (len >= MAX_SHARED_MEMORY_FILENAME_SIZE)
-			return false;
-
-		memcpy(newFilename, filename, len);
-		newFilename[len] = (char)0;
-		return true;
-	}
-
-	static bool CopyName(char *newName, const char *name) {
-		size_t len = strlen(name);
-
-		if (len >= MAX_SHARED_MEMORY_FILENAME_SIZE - 1)
-			return false;
-
-		newName[0] = '/';
-		memcpy(&newName[1], name, len);
-		newName[len + 1] = (char)0;
-		return true;
-	}
-
-	char _name[MAX_SHARED_MEMORY_FILENAME_SIZE];
+	bool _readOnly;
+#else
+	bool _readOnly;
 	bool _usingFile;
 	int _handle;
+	char _name[MAX_SHARED_MEMORY_FILENAME_SIZE];
 #endif
-	bool _readOnly;
 
 	// Disable copying
 	SharedMemory(const SharedMemory &) { }
 	SharedMemory &operator=(const SharedMemory &) { return *this; }
 
 	// Loads shared memory by name or by filename
-	LoadResult Load(const char *name, const char *filename, bool readOnly, Size size = 0, bool deleteOnClose = false) {
-		Close();
-
-		if (size < 0)
-			return LOAD_FAILED_BAD_SIZE;
-
-#ifdef _WIN32
-		if (filename) { // Use file-backed memory
-			_handle = CreateFile(filename, GENERIC_READ | (readOnly ? 0 : GENERIC_WRITE), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, size ? CREATE_NEW : OPEN_EXISTING, FILE_ATTRIBUTE_TEMPORARY | (deleteOnClose ? FILE_FLAG_DELETE_ON_CLOSE : 0), NULL);
-
-			if (_handle == INVALID_HANDLE_VALUE)
-				return LOAD_FAILED_TO_OPEN_FILE;
-
-			if (size) {
-				LARGE_INTEGER newSize;
-				newSize.QuadPart = size;
-
-				if (!SetFilePointerEx(_handle, newSize, NULL, FILE_BEGIN) || !SetEndOfFile(_handle)) {
-					Close();
-					return LOAD_FAILED_TO_RESIZE_FILE;
-				}
-			}
-
-			_mapHandle = CreateFileMapping(_handle, NULL, readOnly ? PAGE_READONLY : PAGE_READWRITE, 0, 0, NULL);
-		}
-		else if (!name)
-			return LOAD_FAILED_BAD_NAME;
-		else if (size) // Don't use file-backed memory (size is set atomically, and memory is zeroized)
-			_mapHandle = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, (readOnly ? PAGE_READONLY : PAGE_READWRITE) | SEC_COMMIT, (DWORD)(size >> 32), (DWORD)size, name);
-		else
-			_mapHandle = OpenFileMapping(FILE_MAP_READ | (readOnly ? 0 : FILE_MAP_WRITE), FALSE, name);
-
-		_readOnly = readOnly;
-		return LOAD_SUCCESS;
-#elif defined(_SC_SHARED_MEMORY_OBJECTS)
-		if (filename) { // Use file-backed memory
-			if (!CopyFilename(_name, filename))
-				return LOAD_FAILED_BAD_NAME;
-
-			_usingFile = true;
-			_handle = open(_name, (readOnly ? O_RDONLY : O_RDWR) | (size ? O_CREAT | O_EXCL : 0), 0600);
-		}
-		else if (!name)
-			return LOAD_FAILED_BAD_NAME;
-		else { // Don't use file-backed memory
-			if (!CopyName(_name, name))
-				return LOAD_FAILED_BAD_NAME;
-
-			_usingFile = false;
-			_handle = shm_open(_name, (readOnly ? O_RDONLY : O_RDWR) | (size ? O_CREAT | O_EXCL : 0), 0600);
-		}
-
-		if (!deleteOnClose)
-			_name[0] = (char)0;
-
-		// Check for error
-		if (_handle == -1) {
-			_name[0] = (char)0;
-			Close();
-			return LOAD_FAILED_TO_OPEN_FILE;
-		}
-		else if (size && ftruncate(_handle, size) == -1) { //< Resize (zeroizes memory)
-			Close();
-			return LOAD_FAILED_TO_RESIZE_FILE;
-		}
-
-		_readOnly = readOnly;
-		return LOAD_SUCCESS;
-#else
-		return LOAD_FAILED_UNSUPPORTED;
-#endif
-	}
+	LoadResult Load(const char *name, const char *filename, bool readOnly, Size size = 0, bool deleteOnClose = false);
 
 public:
+	// Gets the recommended directory for putting temporary, shared memory files
+	static bool GetRecommendedDirectory(char *directory, size_t directorySize);
+
+	// Deletes a shared memory file
+	static bool DeleteFileBacked(const char *filename);
+
+	// Deletes a named shared memory entity
+	static bool DeleteNamed(const char *);
+
 #ifdef _WIN32
-	static const bool IS_SUPPORTED = true;
-
-	// Gets the recommended directory for putting temporary, shared memory files
-	static const char *GetRecommendedDirectory() {
-		static char directory[MAX_SHARED_MEMORY_FILENAME_SIZE] = { 0 };
-
-		if (!directory[0]) {
-			DWORD len = GetTempPath(MAX_SHARED_MEMORY_FILENAME_SIZE, directory);
-
-			if (len == 0 || len > MAX_SHARED_MEMORY_FILENAME_SIZE)
-				return "C:\\";
-		}
-
-		return directory;
-	}
-
-	// Deletes a shared memory file
-	static bool DeleteFileBacked(const char *filename) {
-		return DeleteFile(filename) == TRUE;
-	}
-
-	// Deletes a named shared memory entity
-	static bool DeleteNamed(const char *) {
-		return true;
-	}
-
 	SharedMemory() : _handle(INVALID_HANDLE_VALUE), _mapHandle(), _readOnly() { }
-#elif defined(_SC_SHARED_MEMORY_OBJECTS)
-	static const bool IS_SUPPORTED = true;
-
-	// Gets the recommended directory for putting temporary, shared memory files
-	static const char *GetRecommendedDirectory() {
-		const char *directory = getenv("TMPDIR");
-		return directory ? directory : "/tmp";
-	}
-
-	// Deletes a shared memory file
-	static bool DeleteFileBacked(const char *filename) {
-		return unlink(filename) == 0;
-	}
-
-	// Deletes a named shared memory entity
-	static bool DeleteNamed(const char *name) {
-		char realName[MAX_SHARED_MEMORY_FILENAME_SIZE];
-		return name != NULL && CopyName(realName, name) && shm_unlink(realName) == 0;
-	}
-
-	SharedMemory() : _usingFile(), _handle(-1), _readOnly() { _name[0] = (char)0; }
 #else
-	static const bool IS_SUPPORTED = false;
-
-	SharedMemory() : _readOnly() { }
+	SharedMemory() : _readOnly(), _usingFile(), _handle(-1) { _name[0] = (char)0; }
 #endif
 
 	~SharedMemory() { Close(); }
@@ -259,33 +120,7 @@ public:
 	}
 
 	// Closes the shared memory, so that it can no longer be mapped (existing mappings will continue to operate properly)
-	void Close() {
-#ifdef _WIN32
-		if (_mapHandle) {
-			(void)CloseHandle(_mapHandle);
-			_mapHandle = NULL;
-		}
-
-		if (_handle != INVALID_HANDLE_VALUE) {
-			(void)CloseHandle(_handle);
-			_handle = INVALID_HANDLE_VALUE;
-		}
-#elif defined(_SC_SHARED_MEMORY_OBJECTS)
-		if (_name[0]) {
-			if (_usingFile)
-				(void)unlink(_name);
-			else
-				(void)shm_unlink(_name);
-
-			_name[0] = (char)0;
-		}
-
-		if (_handle != -1) {
-			(void)close(_handle);
-			_handle = -1;
-		}
-#endif
-	}
+	void Close();
 };
 
 }

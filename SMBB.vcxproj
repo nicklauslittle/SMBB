@@ -148,22 +148,18 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="src\smbb\DataBlocks.h" />
-    <ClInclude Include="src\smbb\DataView.h" />
     <ClInclude Include="src\smbb\IPAddress.h" />
     <ClInclude Include="src\smbb\IPSocket.h" />
-    <ClInclude Include="src\smbb\PacketMemory.h" />
     <ClInclude Include="src\smbb\SharedMemory.h" />
     <ClInclude Include="src\smbb\SharedMemorySection.h" />
-    <ClInclude Include="src\smbb\Time.h" />
     <ClInclude Include="src\smbb\utilities\StaticCast.h" />
     <ClInclude Include="src\smbb\Version.h" />
-    <ClInclude Include="src\smbb\utilities\Atomic.h" />
     <ClInclude Include="src\smbb\utilities\IntegerTypes.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\smbb\IPAddress.cxx" />
     <ClCompile Include="src\smbb\IPSocket.cxx" />
+    <ClCompile Include="src\smbb\SharedMemory.cxx" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

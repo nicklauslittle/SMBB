@@ -24,13 +24,12 @@ SOFTWARE.
 #ifndef SMBB_SHAREDMEMORYSECTION_H
 #define SMBB_SHAREDMEMORYSECTION_H
 
+#ifndef SMBB_NO_SHARED_MEMORY
 #ifdef _WIN32
 #include <sys/types.h>
 #include <windows.h>
 #else
 #include <unistd.h>
-#include <fcntl.h>
-#ifdef _SC_SHARED_MEMORY_OBJECTS
 #include <sys/mman.h>
 #endif
 #endif
@@ -47,6 +46,7 @@ public:
 	static unsigned long GetOffsetSize() {
 		static unsigned long offsetSize = 0;
 
+#ifndef SMBB_NO_SHARED_MEMORY
 #ifdef _WIN32
 		if (offsetSize == 0) {
 			SYSTEM_INFO sinfo;
@@ -57,17 +57,24 @@ public:
 #elif defined(_SC_PAGE_SIZE) || !defined(_SC_PAGESIZE)
 		if (offsetSize == 0)
 			offsetSize = static_cast<unsigned long>(sysconf(_SC_PAGE_SIZE));
-#else
+#elif defined(_SC_PAGESIZE)
 		if (offsetSize == 0)
 			offsetSize = static_cast<unsigned long>(sysconf(_SC_PAGESIZE));
+#else
+		offsetSize = 4096;
 #endif
-
+#endif
 		return offsetSize;
 	}
 
 	// Gets the closest previous offset that can be used to map a memory section
 	static SharedMemory::Size GetMapOffset(SharedMemory::Size offset) {
-		static SharedMemory::Size mask = GetOffsetSize() - 1;
+		static SharedMemory::Size mask = 0;
+
+#ifndef SMBB_NO_SHARED_MEMORY
+		if (mask == 0)
+			mask = GetOffsetSize() - 1;
+#endif
 		return offset & ~mask;
 	}
 
@@ -84,27 +91,31 @@ private:
 public:
 	// Maps a new section from shared memory (Note that the section is still valid even if the shared memory is closed)
 	SharedMemorySection(const SharedMemory &sharedMemory, size_t size, SharedMemory::Size offset = 0) :
-			_data(), _size(size), _offset(offset), _readOnly(sharedMemory._readOnly) {
+		_data(), _size(size), _offset(offset), _readOnly(sharedMemory._readOnly) {
+#ifndef SMBB_NO_SHARED_MEMORY
 		if (!_size)
 			return;
 
 #ifdef _WIN32
 		_data = (uint8_t *)MapViewOfFile(sharedMemory._mapHandle, _readOnly ? FILE_MAP_READ : FILE_MAP_WRITE, (DWORD)(_offset >> 32), (DWORD)_offset, (SIZE_T)_size);
-#elif defined(_POSIX_SHARED_MEMORY_OBJECTS)
+#else
 		_data = (uint8_t *)mmap(NULL, _size, PROT_READ | (_readOnly ? 0 : PROT_WRITE), MAP_SHARED, sharedMemory._handle, _offset);
 
 		if (_data == MAP_FAILED)
 			_data = NULL;
 #endif
+#endif
 	}
 
 	~SharedMemorySection() {
+#ifndef SMBB_NO_SHARED_MEMORY
 #ifdef _WIN32
 		if (_data)
 			(void)UnmapViewOfFile(_data);
-#elif defined(_POSIX_SHARED_MEMORY_OBJECTS)
+#else
 		if (_data)
 			(void)munmap(_data, _size);
+#endif
 #endif
 	}
 

@@ -23,22 +23,24 @@ SOFTWARE.
 
 #include "IPSocket.h"
 
-#ifndef _WIN32
-#include <dlfcn.h>
-#endif
-
 #ifdef _WIN32
 HANDLE smbb::IPSocket::_qosHandle = INVALID_HANDLE_VALUE;
+#else
+#ifndef SMBB_NO_DYNAMIC_LOADING
+#include <dlfcn.h>
+#endif
 #endif
 
+#ifndef SMBB_NO_SOCKET_MSG
 smbb::IPSocket::RecvMMsgFunction::Type smbb::IPSocket::_recvMMsg = smbb::IPSocket::RecvMMsgFunction::Type();
 smbb::IPSocket::SendMMsgFunction::Type smbb::IPSocket::_sendMMsg = smbb::IPSocket::SendMMsgFunction::Type();
+#endif
 
 // Loads the specified function by name
 smbb::IPSocket::DefaultFunction smbb::IPSocket::FindFunction(const char *name) {
-#if defined(_WIN32) || defined(IP_SOCKET_NO_LOADED_FUNCTIONS)
+#if defined(_WIN32) || defined(SMBB_NO_DYNAMIC_LOADING)
 	(void)name;
-	return (DefaultFunction)NULL;
+	return DefaultFunction();
 #else
 	static void *program = dlopen(NULL, RTLD_LAZY);
 	union SymbolU { void *pointer; DefaultFunction function; } symbol = { dlsym(program, name) };
@@ -54,18 +56,20 @@ bool smbb::IPSocket::Initialize() {
 	if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
 		return false;
 
-#ifndef IP_SOCKET_NO_QWAVE
+#ifndef SMBB_NO_QWAVE
 	if (_qosHandle == INVALID_HANDLE_VALUE) {
 		QOS_VERSION version = { 1 };
 		(void)QOSCreateHandle(&version, &_qosHandle);
 	}
 #endif
 #else
+#ifndef SMBB_NO_SOCKET_MSG
 	if (!_recvMMsg)
 		_recvMMsg = RecvMMsgFunction::Load("recvmmsg");
 
 	if (!_sendMMsg)
 		_sendMMsg = SendMMsgFunction::Load("sendmmsg");
+#endif
 #endif
 	return true;
 }

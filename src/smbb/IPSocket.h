@@ -35,7 +35,7 @@ SOFTWARE.
 #ifdef _WIN32
 #include <WinSock2.h>
 #include <WS2tcpip.h>
-#ifndef IP_SOCKET_NO_QWAVE
+#ifndef SMBB_NO_QWAVE
 #include <qos2.h>
 #endif
 
@@ -47,16 +47,21 @@ SOFTWARE.
 #define GET_OPTION_TYPE(NORMAL_TYPE, WINDOWS_TYPE) NORMAL_TYPE, WINDOWS_TYPE
 #else
 #include <unistd.h>
-#include <dlfcn.h>
 #include <errno.h>
+#ifndef SMBB_NO_FCNTL
 #include <fcntl.h>
+#else
+#include <sys/ioctl.h>
+#endif
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#ifndef SMBB_NO_POLL
+#include <poll.h>
+#endif
 
 #define IP_SOCKET_ERROR(X) IP_SOCKET_CONCATENATE(E, X)
 #define GET_OPTION_TYPE(NORMAL_TYPE, WINDOWS_TYPE) NORMAL_TYPE, NORMAL_TYPE
@@ -67,16 +72,6 @@ struct timespec;
 namespace smbb {
 
 class IPSocket {
-#ifdef _WIN32
-	typedef SOCKET Handle;
-
-	static const Handle INVALID_HANDLE = INVALID_SOCKET;
-#else
-	typedef int Handle;
-
-	static const Handle INVALID_HANDLE = Handle(-1);
-#endif
-
 	typedef void (*DefaultFunction)();
 
 	// Loads the specified function by name
@@ -91,18 +86,8 @@ class IPSocket {
 	};
 
 public:
-	// Initializes the socket implementation
-	static bool Initialize();
-
-	// Cleans up the socket implementation
-	static void Finish();
-
-#if defined(MSG_NOSIGNAL)
-	static const int SEND_FLAGS = MSG_NOSIGNAL;
-#else
-	static const int SEND_FLAGS = 0;
-#endif
 #ifdef _WIN32
+	typedef SOCKET Handle;
 	typedef char *OptionPointer;
 	typedef const char *ConstOptionPointer;
 
@@ -110,11 +95,13 @@ public:
 	typedef int DataLength;
 	typedef int ResultLength;
 
+	static const Handle INVALID_HANDLE = INVALID_SOCKET;
+	static HANDLE _qosHandle;
+
 	// Returns the last error for a given operation on this thread (note that this must be called immediately following a socket call)
 	static int LastError() { return WSAGetLastError(); }
-
-	static HANDLE _qosHandle;
 #else
+	typedef int Handle;
 	typedef void *OptionPointer;
 	typedef const void *ConstOptionPointer;
 
@@ -122,9 +109,23 @@ public:
 	typedef size_t DataLength;
 	typedef ssize_t ResultLength;
 
+	static const Handle INVALID_HANDLE = Handle(-1);
+
 	// Returns the last error for a given operation on this thread (note that this must be called immediately following a socket call)
 	static int LastError() { return errno; }
 #endif
+
+#if defined(MSG_NOSIGNAL)
+	static const int SEND_FLAGS = MSG_NOSIGNAL;
+#else
+	static const int SEND_FLAGS = 0;
+#endif
+
+	// Initializes the socket implementation
+	static bool Initialize();
+
+	// Cleans up the socket implementation
+	static void Finish();
 
 	// Stores the results of a single message operation
 	class MessageResult {
@@ -144,15 +145,20 @@ public:
 		// Checks for errors
 		bool Failed() const { return _result < 0; }
 		bool HasSizeError() const { return _error == IP_SOCKET_ERROR(MSGSIZE); }
-		bool HasTemporaryReceiveError() const { return _error == IP_SOCKET_ERROR(INTR) || _error == IP_SOCKET_ERROR(WOULDBLOCK) || _error == IP_SOCKET_ERROR(AGAIN) || _error == IP_SOCKET_ERROR(NOTCONN); }
-		bool HasTemporarySendError() const { return _error == IP_SOCKET_ERROR(INTR) || _error == IP_SOCKET_ERROR(WOULDBLOCK) || _error == IP_SOCKET_ERROR(AGAIN) || _error == IP_SOCKET_ERROR(NOTCONN) || _error == IP_SOCKET_ERROR(NOBUFS); }
-
+#ifdef _WIN32
+		bool HasTemporaryReceiveError() const { return _error == IP_SOCKET_ERROR(WOULDBLOCK); }
+		bool HasTemporarySendError() const { return _error == IP_SOCKET_ERROR(WOULDBLOCK) || _error == IP_SOCKET_ERROR(NOBUFS); }
+#else
+		bool HasTemporaryReceiveError() const { return _error == IP_SOCKET_ERROR(INTR) || _error == IP_SOCKET_ERROR(WOULDBLOCK) || _error == IP_SOCKET_ERROR(AGAIN); }
+		bool HasTemporarySendError() const { return _error == IP_SOCKET_ERROR(INTR) || _error == IP_SOCKET_ERROR(WOULDBLOCK) || _error == IP_SOCKET_ERROR(AGAIN) || _error == IP_SOCKET_ERROR(NOBUFS); }
+#endif
 		// Compare results
 		bool operator==(const MessageResult &other) { return _result == other._result && _error == other._error; }
 		bool operator!=(const MessageResult &other) { return !(*this == other); }
 	};
 
-	// A POD class representing a buffer
+#ifndef SMBB_NO_SOCKET_MSG
+	// A standard layout class representing a buffer
 	class Buffer {
 #ifdef _WIN32
 		static const size_t MAX_SIZE = size_t(ULONG(-1));
@@ -165,16 +171,14 @@ public:
 #endif
 	public:
 		// Constructs a buffer from the specified data
-		static Buffer Make(const void *data = NULL, size_t length = 0) {
-			Buffer buffer = { };
+		Buffer(const void *data = NULL, size_t length = 0) : _value() {
 #ifdef _WIN32
-			buffer._value.buf = reinterpret_cast<CHAR *>(const_cast<void *>(data));
-			buffer._value.len = static_cast<ULONG>(length);
+			_value.buf = reinterpret_cast<CHAR *>(const_cast<void *>(data));
+			_value.len = static_cast<ULONG>(length);
 #else
-			buffer._value.iov_base = const_cast<void *>(data);
-			buffer._value.iov_len = length;
+			_value.iov_base = StaticCast(_value.iov_base, const_cast<void *>(data));
+			_value.iov_len = length;
 #endif
-			return buffer;
 		}
 
 #ifdef _WIN32
@@ -186,7 +190,7 @@ public:
 #endif
 	};
 
-	// A POD class containing a set of buffers that can be sent or received as a single message
+	// A standard layout class containing a set of buffers that can be sent or received as a single message
 	class Message {
 #ifdef _WIN32
 		struct msghdr {
@@ -200,19 +204,16 @@ public:
 
 	public:
 		// Creates a message structure around an array of buffers (Note: no error checking is done here, it only provides a cross-platform way to access the data)
-		static Message Make(const Buffer buffers[], size_t bufferCount, const IPAddress *address = NULL) {
-			Message message = { };
-
+		Message(const Buffer buffers[], size_t bufferCount, const IPAddress *address = NULL) : _value() {
 			if (address)
-				message._value.msg_name = address->GetPointer();
+				_value.msg_name = address->GetPointer();
 #ifdef _WIN32
-			message._value.lpBuffers = reinterpret_cast<WSABUF *>(const_cast<Buffer *>(buffers));
-			message._value.dwBufferCount = static_cast<ULONG>(bufferCount);
+			_value.lpBuffers = reinterpret_cast<WSABUF *>(const_cast<Buffer *>(buffers));
+			_value.dwBufferCount = static_cast<ULONG>(bufferCount);
 #else
-			message._value.msg_iov = reinterpret_cast<struct iovec *>(const_cast<Buffer *>(buffers));
-			message._value.msg_iovlen = bufferCount;
+			_value.msg_iov = reinterpret_cast<struct iovec *>(const_cast<Buffer *>(buffers));
+			_value.msg_iovlen = bufferCount;
 #endif
-			return message;
 		}
 
 		// Gets the array of buffers and length from the metadata (Note: no error checking is done here, it only provides a cross-platform way to access the data)
@@ -226,19 +227,14 @@ public:
 		friend class IPSocket;
 	};
 
-	// A POD class containing a set of buffers that can be sent or received as a single message as part of a multi-message send or receive
+	// A standard layout class containing a set of buffers that can be sent or received as a single message as part of a multi-message send or receive
 	class MultiMessagePart {
 		Message _message;
 		ResultLength _result;
 
 	public:
 		// Creates a message structure for multiple messages around an array of buffers (Note: no error checking is done here, it only provides a cross-platform way to access the data)
-		static MultiMessagePart Make(const Buffer buffers[], size_t bufferCount, const IPAddress *address = NULL) {
-			MultiMessagePart part = { };
-
-			part._message = Message::Make(buffers, bufferCount, address);
-			return part;
-		}
+		MultiMessagePart(const Buffer buffers[], size_t bufferCount, const IPAddress *address = NULL) : _message(buffers, bufferCount, address), _result() { }
 
 		// Gets the array of buffers and length from the metadata (Note: no error checking is done here, it only provides a cross-platform way to access the data)
 		Buffer *GetBuffers() const { return _message.GetBuffers(); }
@@ -246,6 +242,7 @@ public:
 
 		friend class IPSocket;
 	};
+#endif
 
 	// Recommended MTU values to minimize fragmentation
 	static const size_t IPV4_HEADER_SIZE = 20;
@@ -411,6 +408,7 @@ public:
 		}
 	};
 
+#ifndef SMBB_NO_POLL
 	// Support for poll()
 	enum PollValue {
 		POLL_NO_CHECK = 0,
@@ -482,7 +480,7 @@ public:
 		// Gets the results after a poll
 		PollValue GetResult() const { return static_cast<PollValue>(_item.revents); }
 
-		// Gets the socket associated a poll item
+		// Gets the socket associated with a poll item
 		IPSocket GetSocket() const { return IPSocket(GetEnabledHandle()); }
 	};
 
@@ -505,14 +503,17 @@ public:
 		return poll(reinterpret_cast<struct pollfd *>(set), numItems, timeoutMs);
 #endif
 	}
+#endif // SMBB_NO_POLL
 
 private:
+#ifndef SMBB_NO_SOCKET_MSG
 	// Helpers to get the recvmmsg and sendmmsg functions
 	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int, timespec *)> RecvMMsgFunction;
 	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int)> SendMMsgFunction;
 
 	static RecvMMsgFunction::Type _recvMMsg;
 	static SendMMsgFunction::Type _sendMMsg;
+#endif
 
 	Handle _handle;
 
@@ -552,6 +553,7 @@ private:
 
 			return setsockopt(_handle, IPPROTO_IP, subscribe ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<ConstOptionPointer>(&request), static_cast<OptionLength>(sizeof(request))) == 0;
 		}
+#ifndef SMBB_NO_IPV6
 		else if (multicastAddress.GetFamily() == IPV6) {
 			ipv6_mreq requestV6;
 
@@ -560,7 +562,7 @@ private:
 
 			return setsockopt(_handle, IPPROTO_IPV6, subscribe ? IPV6_ADD_MEMBERSHIP : IPV6_DROP_MEMBERSHIP, reinterpret_cast<ConstOptionPointer>(&requestV6), static_cast<OptionLength>(sizeof(requestV6))) == 0;
 		}
-
+#endif
 		return false;
 	}
 
@@ -606,14 +608,11 @@ public:
 	IPSocket(IPAddressFamily family, IPProtocol protocol) : _handle(INVALID_HANDLE) { (void)Open(family, protocol); }
 	IPSocket(const IPAddress &address, IPProtocol protocol, OpenAttempt openAttempt = OPEN_ONLY) : _handle(INVALID_HANDLE) { (void)Open(address, protocol, openAttempt); }
 
-	virtual ~IPSocket() { }
+	// Returns true if the socket is valid
+	bool IsValid() const { return _handle != INVALID_HANDLE; }
 
-	bool operator==(const IPSocket &other) const { return _handle == other._handle; }
-	bool operator!=(const IPSocket &other) const { return _handle != other._handle; }
-	bool operator>=(const IPSocket &other) const { return _handle >= other._handle; }
-	bool operator>(const IPSocket &other) const { return _handle > other._handle; }
-	bool operator<=(const IPSocket &other) const { return _handle <= other._handle; }
-	bool operator<(const IPSocket &other) const { return _handle < other._handle; }
+	// Gets the native handle of the underlying implementation
+	Handle GetNativeHandle() const { return _handle; }
 
 	// Opens the socket (if it is not already open) for the given address and protocol
 	Chainable<bool> Open(IPAddressFamily family, IPProtocol protocol) {
@@ -645,9 +644,6 @@ public:
 
 		return Chainable<bool>(this, false);
 	}
-
-	// Returns true if the socket is valid
-	bool IsValid() const { return _handle != INVALID_HANDLE; }
 
 	// Gets the local address that is bound to the socket
 	IPAddress GetAddress() const {
@@ -804,9 +800,12 @@ public:
 #ifdef _WIN32
 		u_long mode = nonblocking ? 1 : 0;
 		return Chainable<bool>(this, ioctlsocket(_handle, FIONBIO, &mode) == 0);
-#else
+#elif !defined(SMBB_NO_FCNTL)
 		int flags = fcntl(_handle, F_GETFL);
 		return Chainable<bool>(this, flags != -1 && fcntl(_handle, F_SETFL, nonblocking ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK)) != -1);
+#else
+		int mode = nonblocking ? 1 : 0;
+		return Chainable<bool>(this, ioctl(_handle, FIONBIO, &mode) == 0);
 #endif
 	}
 
@@ -979,7 +978,7 @@ public:
 	// Gets the DSCP value on the socket (the data argument must be the one used to set the DSCP value on some OSes)
 	DSCP GetDSCP(const DSCPData &data = DSCPData()) const {
 #ifdef _WIN32
-#ifndef IP_SOCKET_NO_QWAVE
+#ifndef SMBB_NO_QWAVE
 		QOS_PACKET_PRIORITY priority;
 		ULONG prioritySize = sizeof(priority);
 
@@ -997,7 +996,7 @@ public:
 	// Sets the DSCP value on the socket (some OSes require the socket to be connected before setting the DSCP value)
 	Chainable<bool> SetDSCP(DSCP value, DSCPData &data) {
 #ifdef _WIN32
-#ifndef IP_SOCKET_NO_QWAVE
+#ifndef SMBB_NO_QWAVE
 		QOS_TRAFFIC_TYPE trafficType = value >= DSCP_CS_7 ? QOSTrafficTypeControl :
 			value >= DSCP_SERVICE_TELEPHONY ? QOSTrafficTypeVoice :
 			value >= DSCP_SERVICE_STREAMING ? QOSTrafficTypeAudioVideo :
@@ -1086,6 +1085,11 @@ public:
 	enum ReceiveFlags {
 		RECEIVE_NORMAL = 0,
 		RECEIVE_PEEK = MSG_PEEK, // Peek at the data, but don't consume it (if data is available, the size returned will be greater than 0, but may be less than the total number of bytes available)
+#if defined(MSG_DONTWAIT)
+		RECEIVE_REQUEST_NONBLOCKING = MSG_DONTWAIT, // Request that the receive is non-blocking (this only works on some OSes; use if setting non-blocking mode on the socket fails)
+#else
+		RECEIVE_REQUEST_NONBLOCKING = 0, // Request that the receive is non-blocking (this only works on some OSes; use if setting non-blocking mode on the socket fails)
+#endif
 		RECEIVE_REQUEST_WAIT_FOR_FULL_DATA = MSG_WAITALL, // Request waiting until the full amount of requested data has been consumed (this is not a guarantee, and should not be relied upon)
 #if defined(MSG_WAITFORONE)
 		RECEIVE_REQUEST_ONLY_WAIT_FOR_ONE = MSG_WAITFORONE // Request non-blocking operation after one data packet is consumed when receiving multiple packets (this is not a guarantee, use non-blocking mode if immediate return is required)
@@ -1096,16 +1100,42 @@ public:
 
 	// Receive data from the socket
 	MessageResult Receive(void *data, DataLength length, ReceiveFlags flags = RECEIVE_NORMAL) {
-		Buffer buffer = Buffer::Make(data, length);
-		return Receive(Message::Make(&buffer, 1), flags);
+#ifdef _WIN32
+		DWORD bytesReceived;
+		DWORD recvflags = flags;
+		WSABUF buffer = { static_cast<unsigned long>(length), reinterpret_cast<char *>(data) };
+		int result = WSARecv(_handle, &buffer, 1, &bytesReceived, &recvflags, NULL, NULL);
+
+		if (result == 0)
+			return MessageResult(static_cast<ResultLength>(bytesReceived), 0);
+
+		int error = LastError();
+		return MessageResult(error == IP_SOCKET_ERROR(MSGSIZE) ? static_cast<ResultLength>(bytesReceived) : -1, error);
+#else
+		return MessageResult(recv(_handle, reinterpret_cast<char *>(data), length, flags));
+#endif
 	}
 
 	// Receive data from the socket
 	MessageResult Receive(void *data, DataLength length, IPAddress &from, ReceiveFlags flags = RECEIVE_NORMAL) {
-		Buffer buffer = Buffer::Make(data, length);
-		return Receive(Message::Make(&buffer, 1, &from), flags);
+		IPAddressLength addressLength = sizeof(IPAddress);
+#ifdef _WIN32
+		DWORD bytesReceived;
+		DWORD recvflags = flags;
+		WSABUF buffer = { static_cast<unsigned long>(length), reinterpret_cast<char *>(data) };
+		int result = WSARecvFrom(_handle, &buffer, 1, &bytesReceived, &recvflags, from.GetPointer(), &addressLength, NULL, NULL);
+
+		if (result == 0)
+			return MessageResult(static_cast<ResultLength>(bytesReceived), 0);
+
+		int error = LastError();
+		return MessageResult(error == IP_SOCKET_ERROR(MSGSIZE) ? static_cast<ResultLength>(bytesReceived) : -1, error);
+#else
+		return MessageResult(recvfrom(_handle, reinterpret_cast<char *>(data), length, flags, from.GetPointer(), &addressLength));
+#endif
 	}
 
+#ifndef SMBB_NO_SOCKET_MSG
 	// Receive data from the socket
 	MessageResult Receive(const Message &message, ReceiveFlags flags = RECEIVE_NORMAL) {
 #ifdef _WIN32
@@ -1152,17 +1182,19 @@ public:
 
 		return MessageResult(length, 0);
 	}
+#endif // SMBB_NO_SOCKET_MSG
 
 	// Send data on the socket
 	MessageResult Send(const void *data, DataLength length) {
-		return MessageResult(send(_handle, reinterpret_cast<const char *>(data), length, SEND_FLAGS));
+		return MessageResult(send(_handle, reinterpret_cast<char *>(const_cast<void *>(data)), length, SEND_FLAGS));
 	}
 
 	// Send data to the specific address on the socket
-	MessageResult Send(const IPAddress &address, const void *data, DataLength length) {
-		return MessageResult(sendto(_handle, reinterpret_cast<const char *>(data), length, SEND_FLAGS, address.GetPointer(), address.GetLength()));
+	MessageResult Send(const void *data, DataLength length, const IPAddress &address) {
+		return MessageResult(sendto(_handle, reinterpret_cast<char *>(const_cast<void *>(data)), length, SEND_FLAGS, address.GetPointer(), address.GetLength()));
 	}
 
+#ifndef SMBB_NO_SOCKET_MSG
 	// Send data to the specific address on the socket
 	MessageResult Send(const Message &message) {
 		message._value.msg_namelen = (message._value.msg_name ? reinterpret_cast<const IPAddress *>(message._value.msg_name)->GetLength() : 0);
@@ -1195,6 +1227,7 @@ public:
 
 		return MessageResult(length, 0);
 	}
+#endif // SMBB_NO_SOCKET_MSG
 
 	// Gets the number of hops value for outgoing multicast packets
 	int GetMulticastHops() const {
@@ -1261,35 +1294,39 @@ public:
 	}
 };
 
-// Wraps an IP socket in a safe container that cannot be copied and is automatically closed when it falls out of scope
-class IPSocketGuard : public IPSocket {
+// Wraps an IP socket in a container that is automatically closed when it falls out of scope.
+//  Note: The underlying IP socket can still be changed, so care must be taken to close any intermediate connections
+class AutoCloseIPSocket : public IPSocket {
 	// Disable public copying / assignment
-	IPSocketGuard(const IPSocketGuard &) { }
-	IPSocketGuard &operator=(const IPSocketGuard &other) { IPSocket::operator=(other); return *this; }
+	AutoCloseIPSocket(const AutoCloseIPSocket &);
+	AutoCloseIPSocket &operator=(const IPSocket &other) { IPSocket::operator=(other); return *this; }
+	AutoCloseIPSocket &operator=(const AutoCloseIPSocket &other) { IPSocket::operator=(other); return *this; }
 
 public:
-	IPSocketGuard(const IPSocket &socket = IPSocket()) : IPSocket(socket) { }
-	IPSocketGuard(IPAddressFamily family, IPProtocol protocol) : IPSocket(family, protocol) { }
-	IPSocketGuard(const IPAddress &address, IPProtocol protocol, OpenAttempt openAttempt = OPEN_ONLY) : IPSocket(address, protocol, openAttempt) { }
+	AutoCloseIPSocket(const IPSocket &socket = IPSocket()) : IPSocket(socket) { }
+	AutoCloseIPSocket(IPAddressFamily family, IPProtocol protocol) : IPSocket(family, protocol) { }
+	AutoCloseIPSocket(const IPAddress &address, IPProtocol protocol, OpenAttempt openAttempt = OPEN_ONLY) : IPSocket(address, protocol, openAttempt) { }
 
-	virtual ~IPSocketGuard() {
+	~AutoCloseIPSocket() {
 		if (IsValid())
 			(void)Close();
 	}
 
-	// Swaps the contents of this guard with another, and returns the guard
-	IPSocketGuard &Swap(IPSocketGuard &other) {
-		IPSocket copy = other;
+	// Swaps the contents of this with another, and returns the guard
+	AutoCloseIPSocket &Swap(AutoCloseIPSocket &other) {
+		IPSocket otherSocket = other;
 		other = *this;
-		return *this = copy;
+		return operator=(otherSocket);
 	}
 };
 
 inline IPSocket::SelectValue operator|(IPSocket::SelectValue x, IPSocket::SelectValue y) { return static_cast<IPSocket::SelectValue>(static_cast<int>(x) | y); }
 inline IPSocket::SelectValue operator&(IPSocket::SelectValue x, IPSocket::SelectValue y) { return static_cast<IPSocket::SelectValue>(static_cast<int>(x) & y); }
 
+#ifndef SMBB_NO_POLL
 inline IPSocket::PollValue operator|(IPSocket::PollValue x, IPSocket::PollValue y) { return static_cast<IPSocket::PollValue>(static_cast<int>(x) | y); }
 inline IPSocket::PollValue operator&(IPSocket::PollValue x, IPSocket::PollValue y) { return static_cast<IPSocket::PollValue>(static_cast<int>(x) & y); }
+#endif
 
 inline IPSocket::TypeOfService operator|(IPSocket::TypeOfService x, IPSocket::TypeOfService y) { return static_cast<IPSocket::TypeOfService>(static_cast<int>(x) | y); }
 inline IPSocket::TypeOfService operator&(IPSocket::TypeOfService x, IPSocket::TypeOfService y) { return static_cast<IPSocket::TypeOfService>(static_cast<int>(x) & y); }

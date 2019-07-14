@@ -4,7 +4,7 @@ COMPILE_ARGS :=-D_FILE_OFFSET_BITS=64 -D_LARGE_FILES=1
 LINK_ARGS :=-lrt -ldl
 DIR :=.
 
-SRC :=$(wildcard $(DIR)/src/smbb/*.cxx)
+SRC :=$(wildcard $(DIR)/src/smbb/*.cxx $(DIR)/src/smbb/*/*.cxx)
 OBJ :=$(patsubst $(DIR)/src/smbb/%.cxx,obj/%.o,$(SRC))
 TESTS :=$(patsubst $(DIR)/test/%.cxx,%.exe,$(wildcard $(DIR)/test/*.cxx))
 RUN_TESTS :=$(patsubst %.exe,%.exe.run,$(TESTS))
