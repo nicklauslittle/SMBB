@@ -152,6 +152,8 @@
     <ClInclude Include="src\smbb\IPSocket.h" />
     <ClInclude Include="src\smbb\SharedMemory.h" />
     <ClInclude Include="src\smbb\SharedMemorySection.h" />
+    <ClInclude Include="src\smbb\SMBB.h" />
+    <ClInclude Include="src\smbb\utilities\Inline.h" />
     <ClInclude Include="src\smbb\utilities\StaticCast.h" />
     <ClInclude Include="src\smbb\Version.h" />
     <ClInclude Include="src\smbb\utilities\IntegerTypes.h" />

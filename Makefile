@@ -30,7 +30,7 @@ obj/%.o: $(DIR)/src/smbb/%.cxx
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMPILE_ARGS) -Wall -pedantic -c $< -o $@
 
 # Tests
-%.exe: $(DIR)/test/%.cxx lib$(PROJECT_NAME).a
+%.exe: $(DIR)/test/%.cxx
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMPILE_ARGS) -I$(DIR)/test/catch2 -I$(DIR)/src -Wall -pedantic -o $@ $^ $(LINK_ARGS)
 
 %.exe.run: %.exe

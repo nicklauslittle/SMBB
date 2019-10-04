@@ -36,6 +36,12 @@
     <ClInclude Include="src\smbb\utilities\StaticCast.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\smbb\SMBB.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\smbb\utilities\Inline.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\smbb\IPAddress.cxx">

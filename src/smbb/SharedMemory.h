@@ -33,6 +33,8 @@ SOFTWARE.
 #include <unistd.h>
 #endif
 
+#include "utilities/Inline.h"
+
 #ifndef MAX_SHARED_MEMORY_FILENAME_SIZE
 #define MAX_SHARED_MEMORY_FILENAME_SIZE 1024U
 #endif
@@ -79,17 +81,17 @@ private:
 	SharedMemory &operator=(const SharedMemory &) { return *this; }
 
 	// Loads shared memory by name or by filename
-	LoadResult Load(const char *name, const char *filename, bool readOnly, Size size = 0, bool deleteOnClose = false);
+	SMBB_INLINE LoadResult Load(const char *name, const char *filename, bool readOnly, Size size = 0, bool deleteOnClose = false);
 
 public:
 	// Gets the recommended directory for putting temporary, shared memory files
-	static bool GetRecommendedDirectory(char *directory, size_t directorySize);
+	static SMBB_INLINE bool GetRecommendedDirectory(char *directory, size_t directorySize);
 
 	// Deletes a shared memory file
-	static bool DeleteFileBacked(const char *filename);
+	static SMBB_INLINE bool DeleteFileBacked(const char *filename);
 
 	// Deletes a named shared memory entity
-	static bool DeleteNamed(const char *);
+	static SMBB_INLINE bool DeleteNamed(const char *);
 
 #ifdef _WIN32
 	SharedMemory() : _handle(INVALID_HANDLE_VALUE), _mapHandle(), _readOnly() { }
@@ -120,7 +122,7 @@ public:
 	}
 
 	// Closes the shared memory, so that it can no longer be mapped (existing mappings will continue to operate properly)
-	void Close();
+	SMBB_INLINE void Close();
 };
 
 }

@@ -26,10 +26,6 @@ SOFTWARE.
 
 #include <cstring>
 
-#include "utilities/StaticCast.h"
-
-#include "IPAddress.h"
-
 #define IP_SOCKET_CONCATENATE(A, B) A ## B
 
 #ifdef _WIN32
@@ -67,6 +63,11 @@ SOFTWARE.
 #define GET_OPTION_TYPE(NORMAL_TYPE, WINDOWS_TYPE) NORMAL_TYPE, NORMAL_TYPE
 #endif
 
+#include "utilities/Inline.h"
+#include "utilities/StaticCast.h"
+
+#include "IPAddress.h"
+
 struct timespec;
 
 namespace smbb {
@@ -75,7 +76,7 @@ class IPSocket {
 	typedef void (*DefaultFunction)();
 
 	// Loads the specified function by name
-	static DefaultFunction FindFunction(const char *name);
+	static SMBB_INLINE DefaultFunction FindFunction(const char *name);
 
 	template <typename F> struct LoadedFunction {
 		// The function type
@@ -96,7 +97,12 @@ public:
 	typedef int ResultLength;
 
 	static const Handle INVALID_HANDLE = INVALID_SOCKET;
-	static HANDLE _qosHandle;
+
+	// Gets the QoS handle
+	static HANDLE &GetQoSHandle() {
+		static HANDLE qosHandle = INVALID_HANDLE_VALUE;
+		return qosHandle;
+	}
 
 	// Returns the last error for a given operation on this thread (note that this must be called immediately following a socket call)
 	static int LastError() { return WSAGetLastError(); }
@@ -122,10 +128,10 @@ public:
 #endif
 
 	// Initializes the socket implementation
-	static bool Initialize();
+	static SMBB_INLINE bool Initialize();
 
 	// Cleans up the socket implementation
-	static void Finish();
+	static SMBB_INLINE void Finish();
 
 	// Stores the results of a single message operation
 	class MessageResult {
@@ -511,8 +517,17 @@ private:
 	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int, timespec *)> RecvMMsgFunction;
 	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int)> SendMMsgFunction;
 
-	static RecvMMsgFunction::Type _recvMMsg;
-	static SendMMsgFunction::Type _sendMMsg;
+	// Gets the recvmmsg function
+	static RecvMMsgFunction::Type &GetRecvMMsg() {
+		static RecvMMsgFunction::Type recvMMsg = RecvMMsgFunction::Type();
+		return recvMMsg;
+	}
+
+	// Gets the recvmmsg function
+	static SendMMsgFunction::Type &GetSendMMsg() {
+		static SendMMsgFunction::Type sendMMsg = SendMMsgFunction::Type();
+		return sendMMsg;
+	}
 #endif
 
 	Handle _handle;
@@ -982,7 +997,7 @@ public:
 		QOS_PACKET_PRIORITY priority;
 		ULONG prioritySize = sizeof(priority);
 
-		if (QOSQueryFlow(_qosHandle, data._flow, QOSQueryPacketPriority, &prioritySize, &priority, 0, NULL)) {
+		if (QOSQueryFlow(GetQoSHandle(), data._flow, QOSQueryPacketPriority, &prioritySize, &priority, 0, NULL)) {
 			return static_cast<DSCP>(priority.ConformantDSCPValue);
 		}
 #endif
@@ -1004,10 +1019,10 @@ public:
 			value == DSCP_SERVICE_LOW_PRIORITY ? QOSTrafficTypeBackground :
 			QOSTrafficTypeBestEffort;
 
-		if (data._flow != 0 || QOSAddSocketToFlow(_qosHandle, _handle, data._address.GetFamily() == FAMILY_UNSPECIFIED ? NULL : data._address.GetPointer(), trafficType, QOS_NON_ADAPTIVE_FLOW, &data._flow)) {
+		if (data._flow != 0 || QOSAddSocketToFlow(GetQoSHandle(), _handle, data._address.GetFamily() == FAMILY_UNSPECIFIED ? NULL : data._address.GetPointer(), trafficType, QOS_NON_ADAPTIVE_FLOW, &data._flow)) {
 			DWORD dscp = value & DSCP_MASK;
 
-			if (QOSSetFlow(_qosHandle, data._flow, QOSSetOutgoingDSCPValue, sizeof(dscp), &dscp, 0, NULL))
+			if (QOSSetFlow(GetQoSHandle(), data._flow, QOSSetOutgoingDSCPValue, sizeof(dscp), &dscp, 0, NULL))
 				return Chainable<bool>(this, true);
 		}
 #endif
@@ -1164,12 +1179,12 @@ public:
 	}
 
 	// Checks if a native receive multiple function is available (otherwise, this is emulated with multiple receive calls)
-	static bool HasNativeReceiveMultiple() { return _recvMMsg != RecvMMsgFunction::Type(); }
+	static bool HasNativeReceiveMultiple() { return GetRecvMMsg() != RecvMMsgFunction::Type(); }
 
 	// Receive multiple data packets from the socket (result is number of messages received)
 	MessageResult ReceiveMultiple(MultiMessagePart parts[], ResultLength length, ReceiveFlags flags = RECEIVE_NORMAL) {
-		if (_recvMMsg)
-			return MessageResult(_recvMMsg(_handle, parts, length, flags, NULL));
+		if (GetRecvMMsg())
+			return MessageResult(GetRecvMMsg()(_handle, parts, length, flags, NULL));
 
 		for (ResultLength i = 0; i < length; i++) {
 			MessageResult result = Receive(parts[i]._message, flags);
@@ -1209,12 +1224,12 @@ public:
 	}
 
 	// Checks if a native send multiple function is available (otherwise, this is emulated with multiple send calls)
-	static bool HasNativeSendMultiple() { return _sendMMsg != SendMMsgFunction::Type(); }
+	static bool HasNativeSendMultiple() { return GetSendMMsg() != SendMMsgFunction::Type(); }
 
 	// Send multiple data packets on the socket (result is number of messages sent)
 	MessageResult SendMultiple(MultiMessagePart parts[], ResultLength length) {
-		if (_sendMMsg)
-			return MessageResult(_sendMMsg(_handle, parts, length, SEND_FLAGS));
+		if (GetSendMMsg())
+			return MessageResult(GetSendMMsg()(_handle, parts, length, SEND_FLAGS));
 
 		for (ResultLength i = 0; i < length; i++) {
 			MessageResult result = Send(parts[i]._message);

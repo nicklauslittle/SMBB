@@ -27,7 +27,8 @@ SOFTWARE.
 #include <iostream>
 #include <string>
 
-#include "smbb/SharedMemorySection.h"
+#define SMBB_HEADER_ONLY
+#include "smbb/SMBB.h"
 
 using namespace smbb;
 
@@ -144,8 +145,6 @@ SCENARIO ("Shared Memory Utilities Test", "[SharedMemory], [Utilities]") {
 	}
 }
 
-#include "smbb/IPAddress.h"
-
 static void DumpAddress(const IPAddress &address) {
 	IPAddress::String str;
 	std::cout << address.ToURI(str, true) << " (" << address.GetInterfaceIndex() << ")" << std::endl;
@@ -161,8 +160,6 @@ static void DumpAddresses(const char *address, const char *port, bool bindable, 
 	if (found > 0)
 		std::cout << std::endl;
 }
-
-#include "smbb/IPSocket.h"
 
 #ifdef SMBB_NO_IPV6
 #define IPV6 IPV4
@@ -318,7 +315,7 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	}
 
 	// Test sending data
-	const char DATA[] = "This is a test string that is sent through the socket and should match what is received.";
+	static const char DATA[] = "This is a test string that is sent through the socket and should match what is received.";
 	IPSocket::SelectSets recvSets;
 	size_t i = 0;
 
@@ -341,7 +338,7 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 
 #ifndef SMBB_NO_SOCKET_MSG
 	// Test sending too much data
-	const char TOO_MUCH_DATA[33000] = { };
+	static const char TOO_MUCH_DATA[33000] = { };
 	IPSocket::Buffer tooMuchDataBuffers[2] = { IPSocket::Buffer(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)), IPSocket::Buffer(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)) };
 	IPSocket::MessageResult tooMuchDataError = sendSocket.Send(IPSocket::Message(tooMuchDataBuffers, 2, &sendToAddress));
 

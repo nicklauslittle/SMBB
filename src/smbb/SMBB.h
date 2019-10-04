@@ -21,16 +21,19 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#ifndef SMBB_VERSION_H
-#define SMBB_VERSION_H
+#ifndef SMBB_H
+#define SMBB_H
 
-#define SMBB_VERSION_QUOTE_(X) #X
-#define SMBB_VERSION_QUOTE(X) SMBB_VERSION_QUOTE_(X)
+#include "IPAddress.h"
+#include "IPSocket.h"
+#include "SharedMemory.h"
+#include "SharedMemorySection.h"
+#include "Version.h"
 
-#define SMBB_MAJOR_VERSION 0
-#define SMBB_MINOR_VERSION 5
-#define SMBB_BUGFIX_VERSION 0
-
-#define SMBB_VERSION_STRING SMBB_VERSION_QUOTE(SMBB_MAJOR_VERSION) "." SMBB_VERSION_QUOTE(SMBB_MINOR_VERSION) "." SMBB_VERSION_QUOTE(SMBB_BUGFIX_VERSION)
+#ifdef SMBB_HEADER_ONLY
+#include "IPAddress.cxx"
+#include "IPSocket.cxx"
+#include "SharedMemory.cxx"
+#endif
 
 #endif

@@ -26,8 +26,6 @@ SOFTWARE.
 
 #include <cstring>
 
-#include "utilities/StaticCast.h"
-
 #ifdef _WIN32
 #include <WinSock2.h>
 #include <WS2tcpip.h>
@@ -36,6 +34,9 @@ SOFTWARE.
 #include <netinet/in.h>
 #include <sys/socket.h>
 #endif
+
+#include "utilities/Inline.h"
+#include "utilities/StaticCast.h"
 
 namespace smbb {
 
@@ -70,7 +71,7 @@ public:
 	typedef char String[64];
 
 	// Parses a set of addresses from an address (NULL => loopback, "" => all non-loopback addresses) and service (NULL => any service/port)
-	static int Parse(IPAddress results[], int resultsSize, const char *address, const char *service = NULL, bool bindable = false, IPAddressFamily family = FAMILY_UNSPECIFIED);
+	static SMBB_INLINE int Parse(IPAddress results[], int resultsSize, const char *address, const char *service = NULL, bool bindable = false, IPAddressFamily family = FAMILY_UNSPECIFIED);
 
 	// Gets the loopback address for the specified family
 	static IPAddress Loopback(IPAddressFamily family) {
@@ -139,7 +140,7 @@ public:
 	IPAddressFamily GetFamily() const { return static_cast<IPAddressFamily>(_ipv4.sin_family); }
 
 	// Gets the interface index from the address
-	int GetInterfaceIndex() const;
+	SMBB_INLINE int GetInterfaceIndex() const;
 
 	// Gets the length of the address
 	IPAddressLength GetLength() const {
@@ -236,7 +237,7 @@ public:
 	bool IsValid() const { return GetFamily() != FAMILY_UNSPECIFIED; }
 
 	// Gets the string URI authority (host/port) representation of the address
-	char *ToURI(String buffer, bool includePort = true) const;
+	SMBB_INLINE char *ToURI(String buffer, bool includePort = true) const;
 
 	friend class IPSocket;
 };
