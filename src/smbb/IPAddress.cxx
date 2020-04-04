@@ -1,6 +1,6 @@
 
 /**
-Copyright (c) 2019 Nick Little
+Copyright (c) 2019-2020 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,10 +25,14 @@ SOFTWARE.
 
 #include <cstring>
 
-#ifdef _WIN32
-#include <WinSock2.h>
-#include <IPHlpApi.h>
-#include <WS2tcpip.h>
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <iphlpapi.h>
+#include <ws2tcpip.h>
+
+#ifndef AI_V4MAPPED
+#define AI_V4MAPPED 0x800
+#endif
 #else
 #include <arpa/inet.h>
 #include <net/if.h> // Due to a BSD bug, this must appear before ifaddrs.h
@@ -51,7 +55,7 @@ int smbb::IPAddress::Parse(IPAddress results[], int resultsSize, const char *add
 	info.ai_family = family;
 	info.ai_socktype = (!service || !service[0] || (service[0] >= '0' && service[0] <= '9') ? UDP : PROTOCOL_UNSPECIFIED);
 
-#ifndef _WIN32
+#if !defined(_WIN32)
 	if (address && !address[0]) {
 		unsigned short port = 0;
 		ifaddrs *addresses = NULL;
@@ -61,7 +65,7 @@ int smbb::IPAddress::Parse(IPAddress results[], int resultsSize, const char *add
 			for (addrinfo *it = result; !port && it; it = it->ai_next) {
 				if (it->ai_family == IPV4 && it->ai_addr)
 					port = ntohs(reinterpret_cast<sockaddr_in *>(it->ai_addr)->sin_port);
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 				else if (it->ai_family == IPV6 && it->ai_addr)
 					port = ntohs(reinterpret_cast<sockaddr_in6 *>(it->ai_addr)->sin6_port);
 #endif
@@ -72,14 +76,14 @@ int smbb::IPAddress::Parse(IPAddress results[], int resultsSize, const char *add
 
 		// Iterate all addresses
 		const char LOOPBACK_IP[] = { 127, 0, 0, 1 };
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		const char LOOPBACK_IPV6[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
 #endif
 		if (getifaddrs(&addresses) == 0) {
 			for (ifaddrs *it = addresses; i < resultsSize && it; it = it->ifa_next) {
 				if ((family == FAMILY_UNSPECIFIED || family == IPV4) && it->ifa_addr && it->ifa_addr->sa_family == IPV4 && memcmp(&reinterpret_cast<sockaddr_in *>(it->ifa_addr)->sin_addr, LOOPBACK_IP, sizeof(LOOPBACK_IP)) != 0)
 					results[i++] = IPAddress(*reinterpret_cast<sockaddr_in *>(it->ifa_addr), port);
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 				else if ((family == FAMILY_UNSPECIFIED || family == IPV6) && it->ifa_addr && it->ifa_addr->sa_family == IPV6 && memcmp(&reinterpret_cast<sockaddr_in6 *>(it->ifa_addr)->sin6_addr, LOOPBACK_IPV6, sizeof(LOOPBACK_IPV6)) != 0)
 					results[i++] = IPAddress(*reinterpret_cast<sockaddr_in6 *>(it->ifa_addr), port);
 #endif
@@ -95,7 +99,7 @@ int smbb::IPAddress::Parse(IPAddress results[], int resultsSize, const char *add
 		for (addrinfo *it = result; i < resultsSize && it; it = it->ai_next) {
 			if (it->ai_family == IPV4 && it->ai_addr)
 				results[i++] = IPAddress(*reinterpret_cast<sockaddr_in *>(it->ai_addr));
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 			else if (it->ai_family == IPV6 && it->ai_addr)
 				results[i++] = IPAddress(*reinterpret_cast<sockaddr_in6 *>(it->ai_addr));
 #endif
@@ -116,7 +120,7 @@ int smbb::IPAddress::GetInterfaceIndex() const {
 
 	// Go through all available address
 	int result = -1;
-#ifdef _WIN32
+#if defined(_WIN32)
 	IP_ADAPTER_ADDRESSES stackBuffer[32]; // Use .PhysicalAddress to get MAC Address
 	ULONG bufferSize = static_cast<ULONG>(sizeof(stackBuffer));
 
@@ -129,7 +133,7 @@ int smbb::IPAddress::GetInterfaceIndex() const {
 				for (IP_ADAPTER_UNICAST_ADDRESS *addr = it->FirstUnicastAddress; result < 0 && addr; addr = addr->Next) {
 					if (GetFamily() == IPV4 && addr->Address.lpSockaddr && reinterpret_cast<sockaddr_in *>(addr->Address.lpSockaddr)->sin_addr.s_addr == _ipv4.sin_addr.s_addr)
 						result = static_cast<int>(it->IfIndex);
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 					else if (GetFamily() == IPV6 && addr->Address.lpSockaddr && memcmp(&reinterpret_cast<sockaddr_in6 *>(addr->Address.lpSockaddr)->sin6_addr, &_ipv6.sin6_addr, sizeof(_ipv6.sin6_addr)) == 0)
 						result = static_cast<int>(it->Ipv6IfIndex);
 #endif
@@ -149,7 +153,7 @@ int smbb::IPAddress::GetInterfaceIndex() const {
 	if (getifaddrs(&addresses) == 0) {
 		for (ifaddrs *it = addresses; result < 0 && it; it = it->ifa_next) {
 			if (it->ifa_addr && GetFamily() == it->ifa_addr->sa_family && ( // MAC Address when sa_family == AF_LINK (struct sockaddr_dl *, sdl_data + sdl_nlen, sdl_alen) or AF_PACKET (struct sockaddr_ll*, sll_addr)
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 				(GetFamily() == IPV6 && memcmp(&reinterpret_cast<sockaddr_in6 *>(it->ifa_addr)->sin6_addr, &_ipv6.sin6_addr, sizeof(_ipv6.sin6_addr)) == 0) ||
 #endif
 				(GetFamily() == IPV4 && reinterpret_cast<sockaddr_in *>(it->ifa_addr)->sin_addr.s_addr == _ipv4.sin_addr.s_addr)))
@@ -191,7 +195,7 @@ char *smbb::IPAddress::ToURI(String buffer, bool includePort) const {
 			*buffer++ = static_cast<char>('0' + num);
 		}
 	}
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 	else if (GetFamily() == IPV6) {
 		const char hex[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
 

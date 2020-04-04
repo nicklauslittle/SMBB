@@ -1,6 +1,6 @@
 
 /**
-Copyright (c) 2019 Nick Little
+Copyright (c) 2019-2020 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,8 +24,8 @@ SOFTWARE.
 #ifndef SMBB_SHAREDMEMORYSECTION_H
 #define SMBB_SHAREDMEMORYSECTION_H
 
-#ifndef SMBB_NO_SHARED_MEMORY
-#ifdef _WIN32
+#if !defined(SMBB_NO_SHARED_MEMORY)
+#if defined(_WIN32)
 #include <sys/types.h>
 #include <windows.h>
 #else
@@ -46,8 +46,8 @@ public:
 	static unsigned long GetOffsetSize() {
 		static unsigned long offsetSize = 0;
 
-#ifndef SMBB_NO_SHARED_MEMORY
-#ifdef _WIN32
+#if !defined(SMBB_NO_SHARED_MEMORY)
+#if defined(_WIN32)
 		if (offsetSize == 0) {
 			SYSTEM_INFO sinfo;
 
@@ -71,7 +71,7 @@ public:
 	static SharedMemory::Size GetMapOffset(SharedMemory::Size offset) {
 		static SharedMemory::Size mask = 0;
 
-#ifndef SMBB_NO_SHARED_MEMORY
+#if !defined(SMBB_NO_SHARED_MEMORY)
 		if (mask == 0)
 			mask = GetOffsetSize() - 1;
 #endif
@@ -92,11 +92,11 @@ public:
 	// Maps a new section from shared memory (Note that the section is still valid even if the shared memory is closed)
 	SharedMemorySection(const SharedMemory &sharedMemory, size_t size, SharedMemory::Size offset = 0) :
 		_data(), _size(size), _offset(offset), _readOnly(sharedMemory._readOnly) {
-#ifndef SMBB_NO_SHARED_MEMORY
+#if !defined(SMBB_NO_SHARED_MEMORY)
 		if (!_size)
 			return;
 
-#ifdef _WIN32
+#if defined(_WIN32)
 		_data = (uint8_t *)MapViewOfFile(sharedMemory._mapHandle, _readOnly ? FILE_MAP_READ : FILE_MAP_WRITE, (DWORD)(_offset >> 32), (DWORD)_offset, (SIZE_T)_size);
 #else
 		_data = (uint8_t *)mmap(NULL, _size, PROT_READ | (_readOnly ? 0 : PROT_WRITE), MAP_SHARED, sharedMemory._handle, _offset);
@@ -108,8 +108,8 @@ public:
 	}
 
 	~SharedMemorySection() {
-#ifndef SMBB_NO_SHARED_MEMORY
-#ifdef _WIN32
+#if !defined(SMBB_NO_SHARED_MEMORY)
+#if defined(_WIN32)
 		if (_data)
 			(void)UnmapViewOfFile(_data);
 #else

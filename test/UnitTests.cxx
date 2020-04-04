@@ -161,7 +161,7 @@ static void DumpAddresses(const char *address, const char *port, bool bindable, 
 		std::cout << std::endl;
 }
 
-#ifdef SMBB_NO_IPV6
+#if defined(SMBB_NO_IPV6)
 #define IPV6 IPV4
 #endif
 
@@ -244,7 +244,7 @@ static void TestTCP(const char *address, const char *port, IPAddressFamily famil
 	REQUIRE(peer.Receive(receivedData, static_cast<IPSocket::DataLength>(sizeof(DATA))).GetResult() == sizeof(DATA));
 	REQUIRE(memcmp(DATA, receivedData, sizeof(DATA)) == 0);
 
-#ifndef SMBB_NO_SOCKET_MSG
+#if !defined(SMBB_NO_SOCKET_MSG)
 	// Test sending more data
 	IPSocket::Buffer splitData[] = { IPSocket::Buffer(&DATA[0], 21), IPSocket::Buffer(&DATA[29], 59) };
 	IPSocket::Message singleSplitData = IPSocket::Message(splitData, 2);
@@ -336,7 +336,7 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	REQUIRE(readSocket.Receive(receivedData, static_cast<IPSocket::DataLength>(sizeof(receivedData))).GetResult() == sizeof(receivedData));
 	REQUIRE(memcmp(DATA, receivedData, sizeof(DATA)) == 0);
 
-#ifndef SMBB_NO_SOCKET_MSG
+#if !defined(SMBB_NO_SOCKET_MSG)
 	// Test sending too much data
 	static const char TOO_MUCH_DATA[33000] = { };
 	IPSocket::Buffer tooMuchDataBuffers[2] = { IPSocket::Buffer(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)), IPSocket::Buffer(TOO_MUCH_DATA, sizeof(TOO_MUCH_DATA)) };
@@ -425,7 +425,7 @@ static bool TestSocketOptions(IPAddressFamily family, IPProtocol protocol) {
 SCENARIO ("IP Socket Test", "[IPSocket]") {
 	REQUIRE(IPSocket::Initialize());
 
-#ifndef SMBB_NO_SOCKET_MSG
+#if !defined(SMBB_NO_SOCKET_MSG)
 	REQUIRE(std::is_standard_layout<IPSocket::Buffer>::value);
 	REQUIRE(std::is_standard_layout<IPSocket::Message>::value);
 	REQUIRE(std::is_standard_layout<IPSocket::MultiMessagePart>::value);
@@ -439,14 +439,14 @@ SCENARIO ("IP Socket Test", "[IPSocket]") {
 	GIVEN ("A set of IP addresses and ports") {
 		WHEN ("Testing TCP connections using the addresses and ports") {
 			THEN ("The TCP test succeeds") {
-#ifndef SMBB_NO_SOCKET_MSG
+#if !defined(SMBB_NO_SOCKET_MSG)
 				std::cout << "Has multiple receive: " << IPSocket::HasNativeReceiveMultiple() << std::endl;
 				std::cout << "Has multiple send: " << IPSocket::HasNativeSendMultiple() << std::endl << std::endl;
 #endif
 				// Test TCP
 				TestTCP("127.0.0.1", NULL);
 				TestTCP("127.0.0.1", NULL, IPV4);
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 				TestTCP("::1", NULL, IPV6);
 #endif
 			}
@@ -456,7 +456,7 @@ SCENARIO ("IP Socket Test", "[IPSocket]") {
 			THEN ("The multicast UDP test succeeds") {
 				// Test Multicast
 				REQUIRE(TestMulticastUDP(NULL, "239.192.2.3", NULL, IPV4));
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 				REQUIRE(TestMulticastUDP(NULL, "ff08::0001", NULL, IPV6));
 
 				IPAddress ipAddresses[8];
@@ -474,7 +474,7 @@ SCENARIO ("IP Socket Test", "[IPSocket]") {
 				// Test Options
 				REQUIRE(TestSocketOptions(IPV4, TCP));
 				REQUIRE(TestSocketOptions(IPV4, UDP));
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 				REQUIRE(TestSocketOptions(IPV6, TCP));
 				REQUIRE(TestSocketOptions(IPV6, UDP));
 #endif
@@ -614,7 +614,7 @@ SCENARIO ("Select Test", "[IPSocket]") {
 	IPSocket::Finish();
 }
 
-#ifndef SMBB_NO_POLL
+#if !defined(SMBB_NO_POLL)
 SCENARIO ("Poll Test", "[IPSocket]") {
 	REQUIRE(IPSocket::Initialize());
 	REQUIRE(std::is_standard_layout<IPSocket::PollItem>::value);

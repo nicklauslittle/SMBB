@@ -1,6 +1,6 @@
 
 /**
-Copyright (c) 2019 Nick Little
+Copyright (c) 2019-2020 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -26,9 +26,9 @@ SOFTWARE.
 
 #include <cstring>
 
-#ifdef _WIN32
-#include <WinSock2.h>
-#include <WS2tcpip.h>
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -42,7 +42,7 @@ namespace smbb {
 
 enum IPAddressFamily {
 	IPV4 = AF_INET,
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 	IPV6 = AF_INET6,
 #endif
 	FAMILY_UNSPECIFIED = AF_UNSPEC
@@ -54,7 +54,7 @@ enum IPProtocol {
 	UDP = SOCK_DGRAM
 };
 
-#ifdef _WIN32
+#if defined(_WIN32)
 typedef int IPAddressLength;
 #else
 typedef socklen_t IPAddressLength;
@@ -62,7 +62,7 @@ typedef socklen_t IPAddressLength;
 
 union IPAddress {
 private:
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 	sockaddr_in6 _ipv6;
 #endif
 	sockaddr_in _ipv4;
@@ -76,14 +76,14 @@ public:
 	// Gets the loopback address for the specified family
 	static IPAddress Loopback(IPAddressFamily family) {
 		const char LOOPBACK_IP[] = { 127, 0, 0, 1 };
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		const char LOOPBACK_IPV6[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
 #endif
 		IPAddress address(family);
 
 		if (family == IPV4)
 			(void)memcpy(&address._ipv4.sin_addr, LOOPBACK_IP, sizeof(LOOPBACK_IP));
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		else if (family == IPV6)
 			(void)memcpy(&address._ipv6.sin6_addr, LOOPBACK_IPV6, sizeof(LOOPBACK_IPV6));
 #endif
@@ -98,7 +98,7 @@ public:
 
 	// Constructs a new address from a native address
 	IPAddress(const sockaddr_in &address) : _ipv4(address) { _ipv4.sin_family = StaticCast(_ipv4.sin_family, IPV4); }
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 	IPAddress(const sockaddr_in6 &address) : _ipv6(address) { _ipv6.sin6_family = StaticCast(_ipv6.sin6_family, IPV6); }
 #endif
 
@@ -108,7 +108,7 @@ public:
 
 		if (GetFamily() == IPV4)
 			_ipv4.sin_port = htons(port);
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		else if (GetFamily() == IPV6)
 			_ipv6.sin6_port = htons(port);
 #endif
@@ -125,7 +125,7 @@ public:
 		if (GetFamily() == other.GetFamily()) {
 			if (GetFamily() == IPV4)
 				return memcmp(&_ipv4.sin_addr, &other._ipv4.sin_addr, sizeof(_ipv4.sin_addr)) == 0 && _ipv4.sin_port == other._ipv4.sin_port;
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 			else if (GetFamily() == IPV6)
 				return memcmp(&_ipv6.sin6_addr, &other._ipv6.sin6_addr, sizeof(_ipv6.sin6_addr)) == 0 && _ipv6.sin6_port == other._ipv6.sin6_port;
 #endif
@@ -146,7 +146,7 @@ public:
 	IPAddressLength GetLength() const {
 		if (GetFamily() == IPV4)
 			return sizeof(sockaddr_in);
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		else if (GetFamily() == IPV6)
 			return sizeof(sockaddr_in6);
 #endif
@@ -160,7 +160,7 @@ public:
 	short GetPort() const {
 		if (GetFamily() == IPV4)
 			return ntohs(_ipv4.sin_port);
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		else if (GetFamily() == IPV6)
 			return ntohs(_ipv6.sin6_port);
 #endif
@@ -179,7 +179,7 @@ public:
 			if (includePort)
 				hash = (((hash ^ static_cast<unsigned char>(_ipv4.sin_port)) * multiplier) ^ static_cast<unsigned char>(_ipv4.sin_port >> 8)) * multiplier;
 		}
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		else if (GetFamily() == IPV6) {
 			for (size_t i = 0; i < 16; i++)
 				hash = (hash ^ reinterpret_cast<const char *>(&_ipv6.sin6_addr)[i]) * multiplier;
@@ -194,13 +194,13 @@ public:
 	// Checks if the address is the any address
 	bool IsAny() const {
 		const char ANY_IP[sizeof(_ipv4.sin_addr)] = { };
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		const char ANY_IPV6[sizeof(_ipv6.sin6_addr)] = { };
 #endif
 
 		if (GetFamily() == IPV4)
 			return memcmp(&_ipv4.sin_addr, ANY_IP, sizeof(_ipv4.sin_addr)) == 0;
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		else if (GetFamily() == IPV6)
 			return memcmp(&_ipv6.sin6_addr, ANY_IPV6, sizeof(_ipv6.sin6_addr)) == 0;
 #endif
@@ -210,12 +210,12 @@ public:
 	// Checks if the address is the loopback address
 	bool IsLoopback() const {
 		const char LOOPBACK_IP[] = { 127, 0, 0, 1 };
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		const char LOOPBACK_IPV6[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
 #endif
 		if (GetFamily() == IPV4)
 			return memcmp(&_ipv4.sin_addr, LOOPBACK_IP, sizeof(LOOPBACK_IP)) == 0;
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		else if (GetFamily() == IPV6)
 			return memcmp(&_ipv6.sin6_addr, LOOPBACK_IPV6, sizeof(LOOPBACK_IPV6)) == 0;
 #endif
@@ -226,7 +226,7 @@ public:
 	bool IsMulticast() const {
 		if (GetFamily() == IPV4)
 			return (*reinterpret_cast<const unsigned char *>(&_ipv4.sin_addr) & 0xF0) == 0xE0;
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		else if (GetFamily() == IPV6)
 			return (*reinterpret_cast<const unsigned char *>(&_ipv6.sin6_addr) & 0xFF) == 0xFF;
 #endif

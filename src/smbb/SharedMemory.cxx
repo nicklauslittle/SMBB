@@ -1,6 +1,6 @@
 
 /**
-Copyright (c) 2019 Nick Little
+Copyright (c) 2019-2020 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -26,8 +26,8 @@ SOFTWARE.
 #include <cstdlib>
 #include <cstring>
 
-#ifndef SMBB_NO_SHARED_MEMORY
-#ifdef _WIN32
+#if !defined(SMBB_NO_SHARED_MEMORY)
+#if defined(_WIN32)
 #include <sys/types.h>
 #include <windows.h>
 #else
@@ -37,8 +37,8 @@ SOFTWARE.
 #endif
 #endif
 
-#ifndef SMBB_NO_SHARED_MEMORY
-#ifdef _WIN32
+#if !defined(SMBB_NO_SHARED_MEMORY)
+#if defined(_WIN32)
 // Gets the recommended directory for putting temporary, shared memory files
 bool smbb::SharedMemory::GetRecommendedDirectory(char *directory, size_t directorySize) {
 	if (!directory)
@@ -111,10 +111,10 @@ void smbb::SharedMemory::Close() {
 	}
 }
 #else
-static bool CopyFilename(char *newFilename, const char *filename) {
+static bool CopyFilename(char *newFilename, size_t newNameSize, const char *filename) {
 	size_t len = strlen(filename);
 
-	if (len >= MAX_SHARED_MEMORY_FILENAME_SIZE)
+	if (len >= newNameSize)
 		return false;
 
 	memcpy(newFilename, filename, len);
@@ -122,10 +122,10 @@ static bool CopyFilename(char *newFilename, const char *filename) {
 	return true;
 }
 
-static bool CopyName(char *newName, const char *name) {
+static bool CopyName(char *newName, size_t newNameSize, const char *name) {
 	size_t len = strlen(name);
 
-	if (len >= MAX_SHARED_MEMORY_FILENAME_SIZE - 1)
+	if (len >= newNameSize - 1)
 		return false;
 
 	newName[0] = '/';
@@ -166,7 +166,7 @@ bool smbb::SharedMemory::DeleteFileBacked(const char *filename) {
 // Deletes a named shared memory entity
 bool smbb::SharedMemory::DeleteNamed(const char *name) {
 	char realName[MAX_SHARED_MEMORY_FILENAME_SIZE];
-	return name != NULL && CopyName(realName, name) && shm_unlink(realName) == 0;
+	return name != NULL && CopyName(realName, sizeof(realName), name) && shm_unlink(realName) == 0;
 }
 
 // Loads shared memory by name or by filename
@@ -177,7 +177,7 @@ smbb::SharedMemory::LoadResult smbb::SharedMemory::Load(const char *name, const 
 		return LOAD_FAILED_BAD_SIZE;
 
 	if (filename) { // Use file-backed memory
-		if (!CopyFilename(_name, filename))
+		if (!CopyFilename(_name, sizeof(_name), filename))
 			return LOAD_FAILED_BAD_NAME;
 
 		_usingFile = true;
@@ -186,7 +186,7 @@ smbb::SharedMemory::LoadResult smbb::SharedMemory::Load(const char *name, const 
 	else if (!name)
 		return LOAD_FAILED_BAD_NAME;
 	else { // Don't use file-backed memory
-		if (!CopyName(_name, name))
+		if (!CopyName(_name, sizeof(_name), name))
 			return LOAD_FAILED_BAD_NAME;
 
 		_usingFile = false;

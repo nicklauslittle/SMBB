@@ -1,6 +1,6 @@
 
 /**
-Copyright (c) 2019 Nick Little
+Copyright (c) 2019-2020 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -28,10 +28,10 @@ SOFTWARE.
 
 #define IP_SOCKET_CONCATENATE(A, B) A ## B
 
-#ifdef _WIN32
-#include <WinSock2.h>
-#include <WS2tcpip.h>
-#ifndef SMBB_NO_QWAVE
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#if !defined(SMBB_NO_QWAVE)
 #include <qos2.h>
 #endif
 
@@ -44,7 +44,7 @@ SOFTWARE.
 #else
 #include <unistd.h>
 #include <errno.h>
-#ifndef SMBB_NO_FCNTL
+#if !defined(SMBB_NO_FCNTL)
 #include <fcntl.h>
 #else
 #include <sys/ioctl.h>
@@ -55,7 +55,7 @@ SOFTWARE.
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
-#ifndef SMBB_NO_POLL
+#if !defined(SMBB_NO_POLL)
 #include <poll.h>
 #endif
 
@@ -87,7 +87,7 @@ class IPSocket {
 	};
 
 public:
-#ifdef _WIN32
+#if defined(_WIN32)
 	typedef SOCKET Handle;
 	typedef char *OptionPointer;
 	typedef const char *ConstOptionPointer;
@@ -151,7 +151,7 @@ public:
 		// Checks for errors
 		bool Failed() const { return _result < 0; }
 		bool HasSizeError() const { return _error == IP_SOCKET_ERROR(MSGSIZE); }
-#ifdef _WIN32
+#if defined(_WIN32)
 		bool HasTemporaryReceiveError() const { return _error == IP_SOCKET_ERROR(WOULDBLOCK); }
 		bool HasTemporarySendError() const { return _error == IP_SOCKET_ERROR(WOULDBLOCK) || _error == IP_SOCKET_ERROR(NOBUFS); }
 #else
@@ -163,10 +163,10 @@ public:
 		bool operator!=(const MessageResult &other) { return !(*this == other); }
 	};
 
-#ifndef SMBB_NO_SOCKET_MSG
+#if !defined(SMBB_NO_SOCKET_MSG)
 	// A standard layout class representing a buffer
 	class Buffer {
-#ifdef _WIN32
+#if defined(_WIN32)
 		static const size_t MAX_SIZE = size_t(ULONG(-1));
 
 		WSABUF _value;
@@ -178,7 +178,7 @@ public:
 	public:
 		// Constructs a buffer from the specified data
 		Buffer(const void *data = NULL, size_t length = 0) : _value() {
-#ifdef _WIN32
+#if defined(_WIN32)
 			_value.buf = reinterpret_cast<CHAR *>(const_cast<void *>(data));
 			_value.len = static_cast<ULONG>(length);
 #else
@@ -187,7 +187,7 @@ public:
 #endif
 		}
 
-#ifdef _WIN32
+#if defined(_WIN32)
 		void *GetData() const { return reinterpret_cast<void *>(_value.buf); }
 		size_t GetLength() const { return _value.len; }
 #else
@@ -198,7 +198,7 @@ public:
 
 	// A standard layout class containing a set of buffers that can be sent or received as a single message
 	class Message {
-#ifdef _WIN32
+#if defined(_WIN32)
 		struct msghdr {
 			LPSOCKADDR msg_name;
 			INT        msg_namelen;
@@ -213,7 +213,7 @@ public:
 		Message(const Buffer buffers[], size_t bufferCount, const IPAddress *address = NULL) : _value() {
 			if (address)
 				_value.msg_name = address->GetPointer();
-#ifdef _WIN32
+#if defined(_WIN32)
 			_value.lpBuffers = reinterpret_cast<WSABUF *>(const_cast<Buffer *>(buffers));
 			_value.dwBufferCount = static_cast<ULONG>(bufferCount);
 #else
@@ -223,7 +223,7 @@ public:
 		}
 
 		// Gets the array of buffers and length from the metadata (Note: no error checking is done here, it only provides a cross-platform way to access the data)
-#ifdef _WIN32
+#if defined(_WIN32)
 		Buffer *GetBuffers() const { return reinterpret_cast<Buffer *>(_value.lpBuffers); }
 		size_t GetLength() const { return _value.dwBufferCount; }
 #else
@@ -268,7 +268,7 @@ public:
 		SELECT_CAN_ACCEPT = SELECT_CAN_READ,
 		SELECT_CAN_WRITE = 0x2,
 		SELECT_IS_CONNECTED = SELECT_CAN_WRITE,
-#ifdef _WIN32
+#if defined(_WIN32)
 		SELECT_CONNECT_FAILED = 0x4,
 #else
 		SELECT_CONNECT_FAILED = 0x8,
@@ -282,7 +282,7 @@ public:
 	class SelectSets {
 		fd_set _readSet;
 		fd_set _writeSet;
-#ifdef _WIN32
+#if defined(_WIN32)
 		fd_set _exceptSet;
 #else
 		int _max;
@@ -290,13 +290,13 @@ public:
 #endif
 	public:
 		SelectSets()
-#ifndef _WIN32
+#if !defined(_WIN32)
 			: _max(), _checks()
 #endif
 		{
 			FD_ZERO(&_readSet);
 			FD_ZERO(&_writeSet);
-#ifdef _WIN32
+#if defined(_WIN32)
 			FD_ZERO(&_exceptSet);
 #endif
 		}
@@ -304,7 +304,7 @@ public:
 		// Adds the socket to the select set for monitoring, returning true if successful
 		// (If this ever returns false use polling instead, as the contents of the select sets cannot be updated to contain the socket.)
 		bool AddSocket(const IPSocket &socket, SelectValue toMonitor) {
-#ifdef _WIN32
+#if defined(_WIN32)
 			if ((toMonitor & SELECT_CHECK_ALL) == 0)
 				return false;
 
@@ -348,7 +348,7 @@ public:
 
 		// Removes the socket from the select set for monitoring
 		void RemoveSocket(const IPSocket &socket, SelectValue toMonitor) {
-#ifdef _WIN32
+#if defined(_WIN32)
 			if ((toMonitor & SELECT_CAN_READ) != 0)
 				FD_CLR(socket._handle, &_readSet);
 
@@ -372,7 +372,7 @@ public:
 		// Waits for either a timeout or one of the sockets specified to be able to receive data / accept a connection or become connected / available to send
 		// (This function normalizes the behaviors between Windows / POSIX to be more like the POSIX standards)
 		int Wait(unsigned long timeoutUs = static_cast<unsigned long>(-1)) {
-#ifdef _WIN32
+#if defined(_WIN32)
 			if (_readSet.fd_count == 0 && _writeSet.fd_count == 0 && _exceptSet.fd_count == 0) {
 				Sleep(timeoutUs / 1000);
 				return 0;
@@ -383,7 +383,7 @@ public:
 
 			timeout.tv_sec = timeoutUs / 1000000;
 			timeout.tv_usec = timeoutUs % 1000000;
-#ifdef _WIN32
+#if defined(_WIN32)
 			return select(0, _readSet.fd_count != 0 ? &_readSet : NULL, _writeSet.fd_count != 0 ? &_writeSet : NULL, _exceptSet.fd_count != 0 ? &_exceptSet : NULL, &timeout);
 #else
 			return select(_max + 1, (_checks & SELECT_CAN_READ) != 0 ? &_readSet : NULL, (_checks & (SELECT_CAN_WRITE | SELECT_CONNECT_FAILED)) != 0 ? &_writeSet : NULL, NULL, &timeout);
@@ -392,7 +392,7 @@ public:
 
 		// Tests the socket for the specified values after a call to Wait(), returning the set values
 		SelectValue TestSocket(const IPSocket &socket, SelectValue checkResult) {
-#ifdef _WIN32
+#if defined(_WIN32)
 			if ((checkResult & SELECT_CONNECT_FAILED) != 0 && FD_ISSET(socket._handle, &_exceptSet) == 0)
 				checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CONNECT_FAILED);
 #else
@@ -414,7 +414,7 @@ public:
 		}
 	};
 
-#ifndef SMBB_NO_POLL
+#if !defined(SMBB_NO_POLL)
 	// Support for poll()
 	enum PollValue {
 		POLL_NO_CHECK = 0,
@@ -440,7 +440,7 @@ public:
 		// Gets a poll item for the specified socket
 		// (The value to monitor can be empty, in which case status will be returned, but no events will be monitored.)
 		static PollItem Make(const IPSocket &socket, PollValue monitor = POLL_NO_CHECK) {
-			PollItem item = { };
+			PollItem item = PollItem();
 
 			item._item.fd = socket._handle;
 			item._item.events = static_cast<short>(monitor & POLL_CHECK_ALL);
@@ -464,7 +464,7 @@ public:
 
 		// Checks if the specified item indicates a failed connection attempt after a poll
 		bool HasFailedConnectionResult() const {
-#ifdef _WIN32
+#if defined(_WIN32)
 			if (!IsEnabled() || _item.revents != 0)
 				return false;
 
@@ -493,7 +493,7 @@ public:
 	// Waits for one of the sockets in the specified set to receive or become connected / available to send or for a timeout
 	// (Use a sane timeout value, as some OSes do not return early when an outgoing connection attempt fails.)
 	static int Poll(PollItem set[], unsigned int numItems, int timeoutMs = 0) {
-#ifdef _WIN32
+#if defined(_WIN32)
 		unsigned int i;
 
 		// Find at least one enabled item
@@ -512,7 +512,7 @@ public:
 #endif // SMBB_NO_POLL
 
 private:
-#ifndef SMBB_NO_SOCKET_MSG
+#if !defined(SMBB_NO_SOCKET_MSG)
 	// Helpers to get the recvmmsg and sendmmsg functions
 	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int, timespec *)> RecvMMsgFunction;
 	typedef LoadedFunction<int(*)(Handle, MultiMessagePart[], size_t, int)> SendMMsgFunction;
@@ -568,7 +568,7 @@ private:
 
 			return setsockopt(_handle, IPPROTO_IP, subscribe ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<ConstOptionPointer>(&request), static_cast<OptionLength>(sizeof(request))) == 0;
 		}
-#ifndef SMBB_NO_IPV6
+#if !defined(SMBB_NO_IPV6)
 		else if (multicastAddress.GetFamily() == IPV6) {
 			ipv6_mreq requestV6;
 
@@ -680,7 +680,7 @@ public:
 
 	// Closes a socket (if using a TCP socket, be sure to call CloseTCPSend() before this call
 	Chainable<bool> Close() {
-#ifdef _WIN32
+#if defined(_WIN32)
 		(void)closesocket(_handle);
 #else
 		(void)close(_handle);
@@ -691,7 +691,7 @@ public:
 
 	// Closes only the sending side of a TCP socket (useful if data still needs to be received but none needs to be sent)
 	Chainable<bool> CloseTCPSend() {
-#ifdef _WIN32
+#if defined(_WIN32)
 		(void)shutdown(_handle, SD_SEND);
 #else
 		(void)shutdown(_handle, SHUT_WR);
@@ -701,7 +701,7 @@ public:
 
 	// Disables checksum calculations where applicable (useful if the data has built-in validation that will be performed at the receiving end)
 	Chainable<bool> SetDisableChecksum(bool disable = true) {
-#ifdef UDP_NOCHECKSUM
+#if defined(UDP_NOCHECKSUM)
 		return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_UDP, UDP_NOCHECKSUM, disable ? 1 : 0));
 #else
 		return Chainable<bool>(this, false);
@@ -754,19 +754,19 @@ public:
 	// Gets an estimated path MTU for outgoing packets (TCP only)
 	int GetMTU() const {
 		int mtu = 0;
-#ifdef IP_MTU
+#if defined(IP_MTU)
 		if (GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MTU, mtu))
 			return mtu;
 #endif
-#ifdef IPV6_MTU
+#if defined(IPV6_MTU)
 		(void)GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MTU, mtu);
 #endif
 		return mtu;
 	}
 
 	enum MTUDiscover {
-#ifdef IP_MTU_DISCOVER
-#ifdef _WIN32
+#if defined(IP_MTU_DISCOVER)
+#if defined(_WIN32)
 		MTU_DISCOVER_DEFAULT = IP_PMTUDISC_NOT_SET,
 #else
 		MTU_DISCOVER_DEFAULT = IP_PMTUDISC_DONT,
@@ -786,11 +786,11 @@ public:
 	// Gets the MTU discover option (TCP only)
 	MTUDiscover GetMTUDiscover() const {
 		int mtuDiscover = MTU_DISCOVER_DEFAULT;
-#ifdef IP_MTU_DISCOVER
+#if defined(IP_MTU_DISCOVER)
 		if (GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MTU_DISCOVER, mtuDiscover))
 			return static_cast<MTUDiscover>(mtuDiscover);
 #endif
-#ifdef IPV6_MTU_DISCOVER
+#if defined(IPV6_MTU_DISCOVER)
 		(void)GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MTU_DISCOVER, mtuDiscover);
 #endif
 		return static_cast<MTUDiscover>(mtuDiscover);
@@ -799,11 +799,11 @@ public:
 	// Sets the MTU discover option (TCP only)
 	Chainable<bool> SetMTUDiscover(MTUDiscover value) {
 		(void)value;
-#ifdef IP_MTU_DISCOVER
+#if defined(IP_MTU_DISCOVER)
 		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MTU_DISCOVER, value))
 			return Chainable<bool>(this, true);
 #endif
-#ifdef IPV6_MTU_DISCOVER
+#if defined(IPV6_MTU_DISCOVER)
 		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MTU_DISCOVER, value))
 			return Chainable<bool>(this, true);
 #endif
@@ -812,7 +812,7 @@ public:
 
 	// Puts the socket in non-blocking mode (or blocking mode if nonblocking is false)
 	Chainable<bool> SetNonblocking(bool nonblocking = true) {
-#ifdef _WIN32
+#if defined(_WIN32)
 		u_long mode = nonblocking ? 1 : 0;
 		return Chainable<bool>(this, ioctlsocket(_handle, FIONBIO, &mode) == 0);
 #elif !defined(SMBB_NO_FCNTL)
@@ -849,7 +849,7 @@ public:
 
 	// Checks the socket option to reuse the port on a socket (does not work on all OSes)
 	bool GetReusePort() const {
-#ifdef SO_REUSEPORT
+#if defined(SO_REUSEPORT)
 		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_REUSEPORT, 0) != 0;
 #else
 		return false;
@@ -858,7 +858,7 @@ public:
 
 	// Sets the socket option to reuse the port on a socket (does not work on all OSes)
 	Chainable<bool> SetReusePort(bool enable = true) {
-#ifdef SO_REUSEPORT
+#if defined(SO_REUSEPORT)
 		return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(SOL_SOCKET, SO_REUSEPORT, enable ? 1 : 0));
 #else
 		(void)enable;
@@ -908,11 +908,11 @@ public:
 	// Gets the type of service option (may not work on all OSes)
 	TypeOfService GetTOS() const {
 		int tos = 0;
-#ifdef IP_TOS
+#if defined(IP_TOS)
 		if (GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_TOS, tos))
 			return static_cast<TypeOfService>(tos);
 #endif
-#ifdef IPV6_TCLASS
+#if defined(IPV6_TCLASS)
 		(void)GetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_TCLASS, tos);
 #endif
 		return static_cast<TypeOfService>(tos);
@@ -920,15 +920,15 @@ public:
 
 	// Sets the type of service option
 	Chainable<bool> SetTOS(TypeOfService value) {
-#ifdef _WIN32
+#if defined(_WIN32)
 		DSCPData data;
 		return SetDSCP(static_cast<DSCP>(value >> 2), data);
 #else
-#ifdef IP_TOS
+#if defined(IP_TOS)
 		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_TOS, value & TOS_MASK))
 			return Chainable<bool>(this, true);
 #endif
-#ifdef IPV6_TCLASS
+#if defined(IPV6_TCLASS)
 		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_TCLASS, value & TOS_MASK))
 			return Chainable<bool>(this, true);
 #endif
@@ -980,9 +980,9 @@ public:
 
 	// DSCP Helper Data
 	struct DSCPData {
-#ifdef _WIN32
-		IPAddress _address;
-		QOS_FLOWID _flow;
+#if defined(_WIN32) && !defined(SMBB_NO_QWAVE)
+		const IPAddress _address;
+		QOS_FLOWID _flow; // Internal use only
 
 		DSCPData(const IPAddress &connectAddress = IPAddress()) : _address(connectAddress), _flow() { }
 #else
@@ -992,8 +992,8 @@ public:
 
 	// Gets the DSCP value on the socket (the data argument must be the one used to set the DSCP value on some OSes)
 	DSCP GetDSCP(const DSCPData &data = DSCPData()) const {
-#ifdef _WIN32
-#ifndef SMBB_NO_QWAVE
+#if defined(_WIN32)
+#if !defined(SMBB_NO_QWAVE)
 		QOS_PACKET_PRIORITY priority;
 		ULONG prioritySize = sizeof(priority);
 
@@ -1010,8 +1010,8 @@ public:
 
 	// Sets the DSCP value on the socket (some OSes require the socket to be connected before setting the DSCP value)
 	Chainable<bool> SetDSCP(DSCP value, DSCPData &data) {
-#ifdef _WIN32
-#ifndef SMBB_NO_QWAVE
+#if defined(_WIN32)
+#if !defined(SMBB_NO_QWAVE)
 		QOS_TRAFFIC_TYPE trafficType = value >= DSCP_CS_7 ? QOSTrafficTypeControl :
 			value >= DSCP_SERVICE_TELEPHONY ? QOSTrafficTypeVoice :
 			value >= DSCP_SERVICE_STREAMING ? QOSTrafficTypeAudioVideo :
@@ -1087,7 +1087,7 @@ public:
 
 		if (error == IP_SOCKET_ERROR(ISCONN))
 			return Chainable<ConnectResult>(this, CONNECT_SUCCESS);
-#ifdef _WIN32
+#if defined(_WIN32)
 		else if (error == IP_SOCKET_ERROR(ALREADY) || error == IP_SOCKET_ERROR(WOULDBLOCK) || error == IP_SOCKET_ERROR(INPROGRESS))
 			return Chainable<ConnectResult>(this, CONNECT_PENDING);
 #else
@@ -1103,19 +1103,23 @@ public:
 #if defined(MSG_DONTWAIT)
 		RECEIVE_REQUEST_NONBLOCKING = MSG_DONTWAIT, // Request that the receive is non-blocking (this only works on some OSes; use if setting non-blocking mode on the socket fails)
 #else
-		RECEIVE_REQUEST_NONBLOCKING = 0, // Request that the receive is non-blocking (this only works on some OSes; use if setting non-blocking mode on the socket fails)
+		RECEIVE_REQUEST_NONBLOCKING = 0, // (Not available) Request that the receive is non-blocking (this only works on some OSes; use if setting non-blocking mode on the socket fails)
 #endif
+#if defined(MSG_WAITALL)
 		RECEIVE_REQUEST_WAIT_FOR_FULL_DATA = MSG_WAITALL, // Request waiting until the full amount of requested data has been consumed (this is not a guarantee, and should not be relied upon)
+#else
+		RECEIVE_REQUEST_WAIT_FOR_FULL_DATA = 0, // (Not available) Request waiting until the full amount of requested data has been consumed (this is not a guarantee, and should not be relied upon)
+#endif
 #if defined(MSG_WAITFORONE)
 		RECEIVE_REQUEST_ONLY_WAIT_FOR_ONE = MSG_WAITFORONE // Request non-blocking operation after one data packet is consumed when receiving multiple packets (this is not a guarantee, use non-blocking mode if immediate return is required)
 #else
-		RECEIVE_REQUEST_ONLY_WAIT_FOR_ONE = 0 // Request non-blocking operation after one data packet is consumed when receiving multiple packets (this is not a guarantee, use non-blocking mode if immediate return is required)
+		RECEIVE_REQUEST_ONLY_WAIT_FOR_ONE = 0 // (Not available) Request non-blocking operation after one data packet is consumed when receiving multiple packets (this is not a guarantee, use non-blocking mode if immediate return is required)
 #endif
 	};
 
 	// Receive data from the socket
 	MessageResult Receive(void *data, DataLength length, ReceiveFlags flags = RECEIVE_NORMAL) {
-#ifdef _WIN32
+#if defined(_WIN32)
 		DWORD bytesReceived;
 		DWORD recvflags = flags;
 		WSABUF buffer = { static_cast<unsigned long>(length), reinterpret_cast<char *>(data) };
@@ -1134,7 +1138,7 @@ public:
 	// Receive data from the socket
 	MessageResult Receive(void *data, DataLength length, IPAddress &from, ReceiveFlags flags = RECEIVE_NORMAL) {
 		IPAddressLength addressLength = sizeof(IPAddress);
-#ifdef _WIN32
+#if defined(_WIN32)
 		DWORD bytesReceived;
 		DWORD recvflags = flags;
 		WSABUF buffer = { static_cast<unsigned long>(length), reinterpret_cast<char *>(data) };
@@ -1150,10 +1154,10 @@ public:
 #endif
 	}
 
-#ifndef SMBB_NO_SOCKET_MSG
+#if !defined(SMBB_NO_SOCKET_MSG)
 	// Receive data from the socket
 	MessageResult Receive(const Message &message, ReceiveFlags flags = RECEIVE_NORMAL) {
-#ifdef _WIN32
+#if defined(_WIN32)
 		DWORD bytesReceived;
 		DWORD recvflags = flags;
 		int result;
@@ -1209,11 +1213,11 @@ public:
 		return MessageResult(sendto(_handle, reinterpret_cast<char *>(const_cast<void *>(data)), length, SEND_FLAGS, address.GetPointer(), address.GetLength()));
 	}
 
-#ifndef SMBB_NO_SOCKET_MSG
+#if !defined(SMBB_NO_SOCKET_MSG)
 	// Send data to the specific address on the socket
 	MessageResult Send(const Message &message) {
 		message._value.msg_namelen = (message._value.msg_name ? reinterpret_cast<const IPAddress *>(message._value.msg_name)->GetLength() : 0);
-#ifdef _WIN32
+#if defined(_WIN32)
 		DWORD bytesSent;
 		int result = WSASendTo(_handle, message._value.lpBuffers, message._value.dwBufferCount, &bytesSent, SEND_FLAGS, message._value.msg_name, message._value.msg_namelen, NULL, NULL);
 
@@ -1338,7 +1342,7 @@ public:
 inline IPSocket::SelectValue operator|(IPSocket::SelectValue x, IPSocket::SelectValue y) { return static_cast<IPSocket::SelectValue>(static_cast<int>(x) | y); }
 inline IPSocket::SelectValue operator&(IPSocket::SelectValue x, IPSocket::SelectValue y) { return static_cast<IPSocket::SelectValue>(static_cast<int>(x) & y); }
 
-#ifndef SMBB_NO_POLL
+#if !defined(SMBB_NO_POLL)
 inline IPSocket::PollValue operator|(IPSocket::PollValue x, IPSocket::PollValue y) { return static_cast<IPSocket::PollValue>(static_cast<int>(x) | y); }
 inline IPSocket::PollValue operator&(IPSocket::PollValue x, IPSocket::PollValue y) { return static_cast<IPSocket::PollValue>(static_cast<int>(x) & y); }
 #endif

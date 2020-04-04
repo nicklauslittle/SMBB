@@ -1,6 +1,6 @@
 
 /**
-Copyright (c) 2019 Nick Little
+Copyright (c) 2019-2020 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -26,7 +26,7 @@ SOFTWARE.
 
 #include <cstdlib>
 
-#ifdef _WIN32
+#if defined(_WIN32)
 #include <windows.h>
 #else
 #include <sys/types.h>
@@ -47,7 +47,7 @@ class SharedMemory {
 	friend class SharedMemorySection;
 
 public:
-#ifdef _WIN32
+#if defined(_WIN32)
 	typedef LONGLONG Size;
 #else
 	typedef off_t Size;
@@ -63,7 +63,7 @@ public:
 	};
 
 private:
-#ifdef _WIN32
+#if defined(_WIN32)
 	typedef HANDLE Handle;
 
 	Handle _handle;
@@ -93,7 +93,7 @@ public:
 	// Deletes a named shared memory entity
 	static SMBB_INLINE bool DeleteNamed(const char *);
 
-#ifdef _WIN32
+#if defined(_WIN32)
 	SharedMemory() : _handle(INVALID_HANDLE_VALUE), _mapHandle(), _readOnly() { }
 #else
 	SharedMemory() : _readOnly(), _usingFile(), _handle(-1) { _name[0] = (char)0; }

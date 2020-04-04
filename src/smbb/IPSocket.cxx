@@ -1,6 +1,6 @@
 
 /**
-Copyright (c) 2019 Nick Little
+Copyright (c) 2019-2020 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -41,20 +41,20 @@ smbb::IPSocket::DefaultFunction smbb::IPSocket::FindFunction(const char *name) {
 
 // Initializes the socket implementation
 bool smbb::IPSocket::Initialize() {
-#ifdef _WIN32
+#if defined(_WIN32)
 	WSADATA data;
 
 	if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
 		return false;
 
-#ifndef SMBB_NO_QWAVE
+#if !defined(SMBB_NO_QWAVE)
 	if (GetQoSHandle() == INVALID_HANDLE_VALUE) {
 		QOS_VERSION version = { 1 };
 		(void)QOSCreateHandle(&version, &GetQoSHandle());
 	}
 #endif
 #else
-#ifndef SMBB_NO_SOCKET_MSG
+#if !defined(SMBB_NO_SOCKET_MSG)
 	if (!GetRecvMMsg())
 		GetRecvMMsg() = RecvMMsgFunction::Load("recvmmsg");
 
@@ -67,7 +67,7 @@ bool smbb::IPSocket::Initialize() {
 
 // Cleans up the socket implementation
 void smbb::IPSocket::Finish() {
-#ifdef _WIN32
+#if defined(_WIN32)
 	WSACleanup();
 #endif
 }

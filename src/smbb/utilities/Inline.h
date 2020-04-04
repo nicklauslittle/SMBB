@@ -1,6 +1,6 @@
 
 /**
-Copyright (c) 2019 Nick Little
+Copyright (c) 2019-2020 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,7 +24,7 @@ SOFTWARE.
 #ifndef SMBB_INLINE_H
 #define SMBB_INLINE_H
 
-#ifdef SMBB_HEADER_ONLY
+#if defined(SMBB_HEADER_ONLY)
 #define SMBB_INLINE inline
 #else
 #define SMBB_INLINE

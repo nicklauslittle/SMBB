@@ -1,6 +1,6 @@
 
 /**
-Copyright (c) 2019 Nick Little
+Copyright (c) 2019-2020 Nick Little
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -30,7 +30,7 @@ SOFTWARE.
 #include "SharedMemorySection.h"
 #include "Version.h"
 
-#ifdef SMBB_HEADER_ONLY
+#if defined(SMBB_HEADER_ONLY)
 #include "IPAddress.cxx"
 #include "IPSocket.cxx"
 #include "SharedMemory.cxx"
