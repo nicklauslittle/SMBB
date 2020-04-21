@@ -275,7 +275,8 @@ static void TestTCP(const char *address, const char *port, IPAddressFamily famil
 
 static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAddress, const char *sendAddress, IPAddressFamily family = FAMILY_UNSPECIFIED) {
 	IPAddress ipAddress;
-	REQUIRE(IPAddress::Parse(&ipAddress, 1, receiveAddress, NULL, true, family) > 0);
+	int lastError = IPAddress::Parse(&ipAddress, 1, receiveAddress, NULL, true, family) > 0 ? 0 : IPSocket::LastError();
+	REQUIRE(lastError == 0);
 
 	// Setup the read socket
 	AutoCloseIPSocket readSocket(ipAddress, UDP, IPSocket::OPEN_AND_BIND);
@@ -284,7 +285,8 @@ static bool TestMulticastUDP(const char *receiveAddress, const char *multicastAd
 	DumpAddress(readSocket.GetAddress());
 
 	IPAddress multicast;
-	REQUIRE(IPAddress::Parse(&multicast, 1, multicastAddress, NULL, false, family) > 0);
+	lastError = IPAddress::Parse(&multicast, 1, multicastAddress, NULL, false, family) > 0 ? 0 : IPSocket::LastError();
+	REQUIRE(lastError == 0);
 	REQUIRE(multicast.IsMulticast());
 	std::cout << "Subscribing to ";
 	DumpAddress(multicast);
@@ -514,7 +516,7 @@ SCENARIO ("Select Test", "[IPSocket]") {
 					REQUIRE(connectToIPv6.SetNonblocking()->Connect(localIPv6Socket.GetAddress()) != IPSocket::CONNECT_SUCCESS);
 
 					sets.AddSocket(connectToIPv4, IPSocket::SELECT_IS_CONNECTED | IPSocket::SELECT_CONNECT_FAILED);
-					REQUIRE(sets.Wait(10000000) == 1); // Wait up to 10 seconds
+					REQUIRE(sets.Wait(100000000) == 1); // Wait up to 100 seconds
 					REQUIRE(sets.TestSocket(connectToIPv4, IPSocket::SELECT_IS_CONNECTED | IPSocket::SELECT_CONNECT_FAILED) == IPSocket::SELECT_CONNECT_FAILED);
 					sets.RemoveSocket(connectToIPv4, IPSocket::SELECT_CONNECT_FAILED);
 
@@ -644,7 +646,7 @@ SCENARIO ("Poll Test", "[IPSocket]") {
 
 					pollSet[0] = IPSocket::PollItem::Make(connectToIPv4, IPSocket::POLL_IS_CONNECTED);
 					REQUIRE(pollSet[0].GetMonitor() == IPSocket::POLL_IS_CONNECTED);
-					REQUIRE(IPSocket::Poll(pollSet, 1, 2000) >= 0); // Wait up to 3 seconds
+					REQUIRE(IPSocket::Poll(pollSet, 1, 200000) >= 0); // Wait up to 200 seconds
 					REQUIRE(pollSet[0].HasFailedConnectionResult());
 
 					pollSet[0].Disable();

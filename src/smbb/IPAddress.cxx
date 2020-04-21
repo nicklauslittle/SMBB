@@ -48,8 +48,8 @@ int smbb::IPAddress::Parse(IPAddress results[], int resultsSize, const char *add
 	addrinfo *result = NULL;
 	int i = 0;
 
-	if (!address && !service)
-		service = "";
+	if (!address && (!service || !service[0]))
+		service = "0";
 
 	info.ai_flags = (bindable ? AI_PASSIVE : 0) | AI_V4MAPPED;
 	info.ai_family = family;
