@@ -1,8 +1,13 @@
 
+# Required variables
 PROJECT_NAME :=smbb
-COMPILE_ARGS :=-D_FILE_OFFSET_BITS=64 -D_LARGE_FILES=1
-LINK_ARGS :=-lrt -ldl
+DEFINE_ARGS :=-D_FILE_OFFSET_BITS=64 -D_LARGE_FILES=1 -D_WIN32_WINNT=0x0600
+LDLIBS :=-lrt -ldl
 DIR :=.
+
+# Optional variables
+CPPFLAGS +=$(DEFINE_ARGS)
+CXXFLAGS :=-Wall -pedantic -O2
 
 SRC :=$(wildcard $(DIR)/src/smbb/*.cxx $(DIR)/src/smbb/*/*.cxx)
 OBJ :=$(patsubst $(DIR)/src/smbb/%.cxx,obj/%.o,$(SRC))
@@ -27,11 +32,11 @@ lib$(PROJECT_NAME).a: $(OBJ)
 
 obj/%.o: $(DIR)/src/smbb/%.cxx
 	mkdir -p $(@D)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMPILE_ARGS) -Wall -pedantic -c $< -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 # Tests
 %.exe: $(DIR)/test/%.cxx
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMPILE_ARGS) -I$(DIR)/test/catch2 -I$(DIR)/src -Wall -pedantic -o $@ $^ $(LINK_ARGS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -I$(DIR)/test/catch2 -I$(DIR)/src -o $@ $^ $(LDLIBS)
 
 %.exe.run: %.exe
 	./$<

@@ -63,6 +63,12 @@ SOFTWARE.
 #define GET_OPTION_TYPE(NORMAL_TYPE, WINDOWS_TYPE) NORMAL_TYPE, NORMAL_TYPE
 #endif
 
+// BSD IPv6
+#if !defined(IPV6_ADD_MEMBERSHIP) && defined(IPV6_JOIN_GROUP)
+#define IPV6_ADD_MEMBERSHIP  IPV6_JOIN_GROUP
+#define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
+#endif
+
 #include "utilities/Inline.h"
 #include "utilities/StaticCast.h"
 
@@ -404,8 +410,8 @@ public:
 			}
 			else
 #endif
-				if ((checkResult & SELECT_CAN_WRITE) != 0 && FD_ISSET(socket._handle, &_writeSet) == 0)
-					checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CAN_WRITE);
+			if ((checkResult & SELECT_CAN_WRITE) != 0 && FD_ISSET(socket._handle, &_writeSet) == 0)
+				checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CAN_WRITE);
 
 			if ((checkResult & SELECT_CAN_READ) != 0 && FD_ISSET(socket._handle, &_readSet) == 0)
 				checkResult = static_cast<SelectValue>(checkResult & ~SELECT_CAN_READ);
@@ -510,6 +516,9 @@ public:
 #endif
 	}
 #endif // SMBB_NO_POLL
+
+// TODO: kqueue on BSD/mac os
+// TODO: epoll on Linux
 
 private:
 #if !defined(SMBB_NO_SOCKET_MSG)
@@ -1248,7 +1257,7 @@ public:
 	}
 #endif // SMBB_NO_SOCKET_MSG
 
-	// Gets the number of hops value for outgoing multicast packets
+	// Gets the number of hops value (TTL) for outgoing multicast packets
 	int GetMulticastHops() const {
 		int hops = -1;
 
@@ -1258,7 +1267,7 @@ public:
 		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_HOPS, hops);
 	}
 
-	// Sets the TTL value of the socket for outgoing unicast packets
+	// Sets the number of hops value (TTL) for outgoing multicast packets
 	Chainable<bool> SetMulticastHops(int value) {
 		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_TTL, value))
 			return Chainable<bool>(this, true);
@@ -1266,7 +1275,7 @@ public:
 		return Chainable<bool>(this, SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_HOPS, value));
 	}
 
-	// Gets the number of hops value for outgoing multicast packets
+	// Gets whether or not loopback is enabled for outgoing multicast packets
 	bool GetMulticastLoopback() const {
 		int loopback = 0;
 
@@ -1276,7 +1285,7 @@ public:
 		return GetOptionInternalDefault<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IPV6, IPV6_MULTICAST_LOOP, loopback) != 0;
 	}
 
-	// Sets the TTL value of the socket for outgoing unicast packets
+	// Sets whether or not loopback is enabled for outgoing multicast packets
 	Chainable<bool> SetMulticastLoopback(bool value = true) {
 		if (SetOptionInternal<GET_OPTION_TYPE(int, DWORD)>(IPPROTO_IP, IP_MULTICAST_LOOP, value ? 1 : 0))
 			return Chainable<bool>(this, true);

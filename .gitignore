@@ -5,8 +5,9 @@ Debug
 *.VC.*db
 .vs
 
-# Makefile files
+# Makefile created files
 obj
-UnitTests
+*.a
+*.exe
 
 *.log

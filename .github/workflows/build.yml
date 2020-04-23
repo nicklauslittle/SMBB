@@ -1,0 +1,39 @@
+name: Build
+
+on: [push]
+
+jobs:
+  linux:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Run tests
+      run: make clean check
+
+  windows:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Add cl.exe to PATH
+      # uses: microsoft/setup-msbuild@v1
+      uses: seanmiddleditch/gha-setup-vsdevenv@v1
+
+    - name: Run tests
+      # run: msbuild -p:WindowsTargetPlatformVersion=10 test/UnitTests.vcxproj
+      run: make CXX="cl.exe" CXXFLAGS="-W4" LDLIBS="ws2_32.lib iphlpapi.lib qwave.lib" clean check
+
+  macos:
+
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Run tests
+      run: make CXX="clang++ -std=c++11" LDLIBS=-ldl clean check
